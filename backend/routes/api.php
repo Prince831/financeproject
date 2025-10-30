@@ -29,3 +29,6 @@ Route::get('/users', function() {
 Route::post('/reconcile', [ReconciliationController::class, 'reconcile']);
 Route::post('/download-report', [ReconciliationController::class, 'downloadReport']);
 Route::post('/email-report', [ReconciliationController::class, 'emailReport']);
+Route::get('/reports', [ReconciliationController::class, 'getReports']);
+Route::get('/reports/{reference}', [ReconciliationController::class, 'getReport']);
+Route::get('/discrepancy-trends', [ReconciliationController::class, 'getDiscrepancyTrends']);
