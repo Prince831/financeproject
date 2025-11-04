@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   build: {
+    target: ['es2015', 'chrome60', 'firefox60', 'safari11', 'edge79'],
     rollupOptions: {
       output: {
         manualChunks: {
@@ -24,11 +25,16 @@ export default defineConfig({
         drop_debugger: true
       }
     },
-    sourcemap: false
+    sourcemap: false,
+    cssCodeSplit: true,
+    reportCompressedSize: false
   },
   server: {
     hmr: {
       overlay: false
     }
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'axios', 'lucide-react']
   }
 })

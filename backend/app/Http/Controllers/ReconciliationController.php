@@ -14,6 +14,240 @@ use Maatwebsite\Excel\Facades\Excel;
 class ReconciliationController extends Controller
 {
     /**
+     * Handle manual reconciliation (without file upload)
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function reconcileManual(Request $request)
+    {
+        $startTime = microtime(true);
+
+        try {
+            Log::info('Starting manual reconciliation process', [
+                'mode' => $request->input('mode'),
+                'start_date' => $request->input('start_date'),
+                'end_date' => $request->input('end_date'),
+                'date_tolerance' => $request->input('date_tolerance'),
+                'amount_tolerance' => $request->input('amount_tolerance'),
+                'use_entire_document' => $request->input('use_entire_document')
+            ]);
+
+            $request->validate([
+                'mode' => 'required|in:by_period,by_transaction_id',
+                'start_date' => 'nullable|date',
+                'end_date' => 'nullable|date',
+                'date_tolerance' => 'nullable|numeric|min:0',
+                'amount_tolerance' => 'nullable|numeric|min:0',
+                'use_entire_document' => 'nullable|boolean'
+            ]);
+
+            $mode = $request->input('mode');
+            $startDate = $request->input('start_date');
+            $endDate = $request->input('end_date');
+
+            // For manual reconciliation, we need to get all transactions and compare them
+            // This simulates comparing the current database state against itself
+            // In a real scenario, this would compare against uploaded data or external system
+
+            $dbRecords = \App\Models\Transaction::select(['transaction_id', 'account_number', 'account_name', 'description', 'reference_number', 'debit_amount', 'credit_amount', 'balance', 'transaction_type', 'status', 'transaction_date'])
+                ->get()
+                ->keyBy('transaction_id');
+
+            // For manual reconciliation, we'll simulate finding discrepancies by checking for data consistency
+            $result = $this->performManualReconciliation($dbRecords, $mode, $startDate, $endDate);
+
+            // Add metadata
+            $result['comparisonTime'] = round(microtime(true) - $startTime, 2) . ' seconds';
+            $result['timestamp'] = now()->toISOString();
+            $result['user'] = 'Anonymous';
+
+            // Save reconciliation report to database
+            $reference = 'MANUAL-' . now()->format('Ymd-His') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
+
+            ReconciliationReport::create([
+                'reference' => $reference,
+                'reconciliation_date' => now(),
+                'total_debit' => $result['totalDebitVariance'] ?? 0,
+                'total_credit' => $result['totalCreditVariance'] ?? 0,
+                'net_change' => $result['netVariance'] ?? 0,
+                'reconciliation_mode' => $mode,
+                'period_start' => $mode === 'by_period' ? $startDate : null,
+                'period_end' => $mode === 'by_period' ? $endDate : null,
+                'total_records' => $result['totalRecords'],
+                'matched_records' => $result['matched'],
+                'discrepancies' => $result['discrepancies'],
+                'discrepancy_details' => $result['records'],
+                'detailed_records' => $result['detailedRecords'] ?? [],
+                'status' => 'completed',
+            ]);
+
+            // Add reference to result
+            $result['reference'] = $reference;
+
+            Log::info('Manual reconciliation completed successfully', [
+                'reference' => $reference,
+                'totalRecords' => $result['totalRecords'],
+                'discrepancies' => $result['discrepancies'],
+                'user' => $result['user']
+            ]);
+
+            return response()->json($result);
+
+        } catch (\Exception $e) {
+            Log::error('Manual reconciliation failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile()
+            ]);
+
+            return response()->json([
+                'message' => 'Manual reconciliation failed: ' . $e->getMessage(),
+                'error_details' => [
+                    'type' => get_class($e),
+                    'line' => $e->getLine(),
+                    'file' => basename($e->getFile())
+                ]
+            ], 500);
+        }
+    }
+
+    private function performManualReconciliation($dbRecords, $mode = 'by_period', $startDate = null, $endDate = null)
+    {
+        $totalRecords = $dbRecords->count();
+        $matched = 0;
+        $discrepancies = 0;
+        $missing = 0;
+        $mismatched = 0;
+        $critical = 0;
+        $high = 0;
+        $medium = 0;
+        $low = 0;
+        $totalDebitVariance = 0;
+        $totalCreditVariance = 0;
+        $records = [];
+        $detailedRecords = [];
+
+        // For manual reconciliation, we'll check for data consistency issues
+        foreach ($dbRecords as $recordId => $dbRecord) {
+            $matched++;
+
+            // Check for potential data quality issues
+            $completeRecordData = [
+                'transaction_id' => $recordId,
+                'document_record' => null, // No document for manual reconciliation
+                'database_record' => $dbRecord->toArray(),
+                'discrepancies' => []
+            ];
+
+            // Check for negative balances (potential issue)
+            if ($dbRecord->balance < -1000) {
+                $discrepancies++;
+                $high++;
+
+                $discrepancy = [
+                    'id' => $recordId,
+                    'field' => 'Balance',
+                    'documentValue' => 'N/A',
+                    'databaseValue' => number_format($dbRecord->balance, 2),
+                    'difference' => 'Negative balance detected',
+                    'type' => 'Data Quality',
+                    'severity' => 'high',
+                    'account' => $dbRecord->account_number
+                ];
+
+                $records[] = $discrepancy;
+                $completeRecordData['discrepancies'][] = $discrepancy;
+            }
+
+            // Check for transactions with both debit and credit (data inconsistency)
+            if ($dbRecord->debit_amount > 0 && $dbRecord->credit_amount > 0) {
+                $discrepancies++;
+                $critical++;
+
+                $discrepancy = [
+                    'id' => $recordId,
+                    'field' => 'Transaction Amounts',
+                    'documentValue' => 'N/A',
+                    'databaseValue' => 'Debit: ' . number_format($dbRecord->debit_amount, 2) . ', Credit: ' . number_format($dbRecord->credit_amount, 2),
+                    'difference' => 'Transaction has both debit and credit amounts',
+                    'type' => 'Data Inconsistency',
+                    'severity' => 'critical',
+                    'account' => $dbRecord->account_number
+                ];
+
+                $records[] = $discrepancy;
+                $completeRecordData['discrepancies'][] = $discrepancy;
+            }
+
+            // Check for missing descriptions
+            if (empty(trim($dbRecord->description))) {
+                $discrepancies++;
+                $medium++;
+
+                $discrepancy = [
+                    'id' => $recordId,
+                    'field' => 'Description',
+                    'documentValue' => 'N/A',
+                    'databaseValue' => 'Empty',
+                    'difference' => 'Missing transaction description',
+                    'type' => 'Missing Data',
+                    'severity' => 'medium',
+                    'account' => $dbRecord->account_number
+                ];
+
+                $records[] = $discrepancy;
+                $completeRecordData['discrepancies'][] = $discrepancy;
+            }
+
+            // Check for unusual amounts (> €10,000)
+            $totalAmount = $dbRecord->debit_amount + $dbRecord->credit_amount;
+            if ($totalAmount > 10000) {
+                $discrepancies++;
+                $low++;
+
+                $discrepancy = [
+                    'id' => $recordId,
+                    'field' => 'Amount',
+                    'documentValue' => 'N/A',
+                    'databaseValue' => number_format($totalAmount, 2),
+                    'difference' => 'Large transaction amount detected',
+                    'type' => 'Amount Alert',
+                    'severity' => 'low',
+                    'account' => $dbRecord->account_number
+                ];
+
+                $records[] = $discrepancy;
+                $completeRecordData['discrepancies'][] = $discrepancy;
+            }
+
+            $detailedRecords[] = $completeRecordData;
+        }
+
+        $netVariance = $totalDebitVariance + $totalCreditVariance;
+        $balanceStatus = abs($netVariance) < 0.01 ? 'In Balance' : 'Out of Balance';
+
+        return [
+            'totalRecords' => $totalRecords,
+            'matched' => $matched,
+            'discrepancies' => $discrepancies,
+            'missing' => $missing,
+            'mismatched' => $mismatched,
+            'critical' => $critical,
+            'high' => $high,
+            'medium' => $medium,
+            'low' => $low,
+            'totalDebitVariance' => $totalDebitVariance,
+            'totalCreditVariance' => $totalCreditVariance,
+            'netVariance' => $netVariance,
+            'balanceStatus' => $balanceStatus,
+            'records' => $records,
+            'detailedRecords' => $detailedRecords
+        ];
+    }
+
+    /**
      * Handle file reconciliation
      *
      * @param Request $request
@@ -52,6 +286,11 @@ class ReconciliationController extends Controller
                     'end_date.required_if' => 'End date is required when using period-based reconciliation.',
                     'end_date.after_or_equal' => 'End date must be on or after the start date.',
                 ]);
+
+                // For period mode, dates are optional if using entire document
+                if ($request->input('mode') === 'by_period' && !$request->has(['start_date', 'end_date'])) {
+                    // Allow period mode without dates (entire document mode)
+                }
             } catch (\Illuminate\Validation\ValidationException $e) {
                 Log::error('Validation failed', [
                     'errors' => $e->errors(),
@@ -347,7 +586,7 @@ class ReconciliationController extends Controller
                 continue;
             }
 
-            // For period mode, filter database records by date range first
+            // For period mode, filter database records by date range first (only if dates are provided)
             if ($mode === 'by_period' && $startDate && $endDate) {
                 $filteredRecords = $dbRecords->filter(function($record) use ($startDate, $endDate) {
                     return $record->transaction_date >= $startDate && $record->transaction_date <= $endDate;
@@ -576,6 +815,131 @@ class ReconciliationController extends Controller
     }
 
     /**
+     * Export PDF report
+     *
+     * @param Request $request
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|\Illuminate\Http\JsonResponse
+     */
+    public function exportPdf(Request $request)
+    {
+        try {
+            $request->validate([
+                'transactions' => 'required|array',
+                'summary' => 'nullable|array',
+                'filters' => 'nullable|array'
+            ]);
+
+            $transactions = $request->input('transactions', []);
+            $summary = $request->input('summary', []);
+            $filters = $request->input('filters', []);
+
+            // Prepare report data for PDF
+            $reportData = [
+                'reference' => 'EXPORT-' . now()->format('Ymd-His'),
+                'timestamp' => now()->toISOString(),
+                'user' => 'Anonymous',
+                'comparisonTime' => 'N/A (Export)',
+                'totalRecords' => count($transactions),
+                'matched' => count($transactions), // All shown transactions are "matched"
+                'discrepancies' => 0,
+                'balanceStatus' => 'N/A',
+                'totalDebitVariance' => 0,
+                'totalCreditVariance' => 0,
+                'netVariance' => 0,
+                'records' => [],
+                'transactions' => $transactions,
+                'summary' => $summary,
+                'filters' => $filters
+            ];
+
+            // Generate PDF
+            $pdf = Pdf::loadView('reports.reconciliation', compact('reportData'));
+            $filename = 'npontu-statement-' . now()->format('Y-m-d_H-i-s') . '.pdf';
+
+            return $pdf->download($filename);
+
+        } catch (\Exception $e) {
+            Log::error('PDF export failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to export PDF: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Export data as CSV
+     *
+     * @param Request $request
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|\Illuminate\Http\JsonResponse
+     */
+    public function exportData(Request $request)
+    {
+        try {
+            $request->validate([
+                'transactions' => 'required|array',
+                'summary' => 'nullable|array',
+                'format' => 'required|in:csv,xlsx'
+            ]);
+
+            $transactions = $request->input('transactions', []);
+            $format = $request->input('format', 'csv');
+
+            if ($format === 'csv') {
+                $filename = 'npontu-data-' . now()->format('Y-m-d_H-i-s') . '.csv';
+                $headers = [
+                    'Content-Type' => 'text/csv',
+                    'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                ];
+
+                $callback = function() use ($transactions) {
+                    $file = fopen('php://output', 'w');
+
+                    // CSV headers
+                    fputcsv($file, [
+                        'Transaction ID',
+                        'Account Number',
+                        'Account Name',
+                        'Debit Amount',
+                        'Credit Amount',
+                        'Transaction Type',
+                        'Transaction Date',
+                        'Description',
+                        'Reference Number',
+                        'Balance',
+                        'Status'
+                    ]);
+
+                    // CSV data
+                    foreach ($transactions as $transaction) {
+                        fputcsv($file, [
+                            $transaction['transaction_id'] ?? '',
+                            $transaction['account_number'] ?? '',
+                            $transaction['account_name'] ?? '',
+                            $transaction['debit_amount'] ?? 0,
+                            $transaction['credit_amount'] ?? 0,
+                            $transaction['transaction_type'] ?? '',
+                            $transaction['transaction_date'] ?? '',
+                            $transaction['description'] ?? '',
+                            $transaction['reference_number'] ?? '',
+                            $transaction['balance'] ?? 0,
+                            $transaction['status'] ?? ''
+                        ]);
+                    }
+
+                    fclose($file);
+                };
+
+                return response()->stream($callback, 200, $headers);
+            } else {
+                // For XLSX, we'd need additional libraries, return CSV for now
+                return $this->exportData($request->merge(['format' => 'csv']));
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Data export failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to export data: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Download reconciliation report
      *
      * @param Request $request
@@ -717,6 +1081,95 @@ class ReconciliationController extends Controller
         } catch (\Exception $e) {
             Log::error('Failed to fetch report', ['error' => $e->getMessage(), 'reference' => $reference]);
             return response()->json(['message' => 'Failed to fetch report'], 500);
+        }
+    }
+
+    /**
+     * Get transactions with filtering and pagination
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getTransactions(Request $request)
+    {
+        try {
+            $query = \App\Models\Transaction::query();
+
+            // Apply filters
+            if ($request->has('start_date') && $request->filled('start_date')) {
+                $query->where('transaction_date', '>=', $request->input('start_date'));
+            }
+
+            if ($request->has('end_date') && $request->filled('end_date')) {
+                $query->where('transaction_date', '<=', $request->input('end_date'));
+            }
+
+            if ($request->has('account_number') && $request->filled('account_number')) {
+                $query->where('account_number', 'like', '%' . $request->input('account_number') . '%');
+            }
+
+            if ($request->has('transaction_type') && $request->filled('transaction_type')) {
+                $query->where('transaction_type', $request->input('transaction_type'));
+            }
+
+            // Pagination
+            $perPage = $request->input('per_page', 50);
+            $page = $request->input('page', 1);
+
+            $transactions = $query->orderBy('transaction_date', 'desc')
+                                 ->orderBy('id', 'desc')
+                                 ->paginate($perPage, ['*'], 'page', $page);
+
+            return response()->json($transactions);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch transactions', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to fetch transactions'], 500);
+        }
+    }
+
+    /**
+     * Get transaction summary statistics
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getTransactionSummary(Request $request)
+    {
+        try {
+            $query = \App\Models\Transaction::query();
+
+            // Apply date filters if provided
+            if ($request->has('start_date') && $request->filled('start_date')) {
+                $query->where('transaction_date', '>=', $request->input('start_date'));
+            }
+
+            if ($request->has('end_date') && $request->filled('end_date')) {
+                $query->where('transaction_date', '<=', $request->input('end_date'));
+            }
+
+            $firstTransaction = $query->orderBy('transaction_date', 'asc')->orderBy('id', 'asc')->first();
+            $lastTransaction = $query->orderBy('transaction_date', 'desc')->orderBy('id', 'desc')->first();
+
+            $summary = [
+                'total_transactions' => $query->count(),
+                'total_debit_amount' => $query->sum('debit_amount'),
+                'total_credit_amount' => $query->sum('credit_amount'),
+                'opening_balance' => $firstTransaction ? $firstTransaction->balance : 0,
+                'closing_balance' => $lastTransaction ? $lastTransaction->balance : 0,
+                'debit_transactions' => $query->where('debit_amount', '>', 0)->count(),
+                'credit_transactions' => $query->where('credit_amount', '>', 0)->count(),
+                'date_range' => [
+                    'start' => $query->min('transaction_date'),
+                    'end' => $query->max('transaction_date')
+                ]
+            ];
+
+            return response()->json($summary);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch transaction summary', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to fetch summary'], 500);
         }
     }
 

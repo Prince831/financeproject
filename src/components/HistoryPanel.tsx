@@ -42,6 +42,9 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   const [reports, setReports] = useState<ReconciliationReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [perPage] = useState(10);
 
   useEffect(() => {
     if (panelVisible) {
@@ -53,8 +56,13 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     try {
       setLoading(true);
       setError(null);
-      const response = await axios.get(`${API_BASE}/reports`);
+      const params = new URLSearchParams();
+      params.append('page', currentPage.toString());
+      params.append('per_page', perPage.toString());
+
+      const response = await axios.get(`${API_BASE}/reports?${params}`);
       setReports(response.data.data || []);
+      setTotalPages(response.data.last_page || 1);
     } catch (err: any) {
       console.error('Failed to fetch reports:', err);
       setError('Failed to load reconciliation history');
@@ -82,7 +90,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
             <div className="p-2 bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg animate-pulse">
               <Activity className="w-5 h-5 text-white" />
             </div>
-            Reconciliation History ({reports.length})
+            Reconciliation History (Page {currentPage} of {totalPages})
           </h3>
         </div>
         <div className="flex gap-2">
@@ -127,28 +135,63 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
             <p>No reconciliation history available</p>
           </div>
         ) : (
-          reports.map((report, index) => (
-            <div key={report.id} className={`flex items-center justify-between p-4 ${darkMode ? 'bg-slate-700/50 hover:bg-slate-700' : 'bg-slate-50 hover:bg-slate-100'} rounded-lg transition-all duration-200 cursor-pointer border ${darkMode ? 'border-slate-600' : 'border-slate-200'} hover:shadow-md hover:scale-[1.02] animate-in slide-in-from-left-4 duration-500`} style={{ animationDelay: `${index * 100}ms` }}>
-              <div className="flex items-center gap-4 flex-1 min-w-0">
-                <div className="p-2 bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg shadow-sm">
-                  <FileText className="w-5 h-5 text-white" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className={`font-semibold text-sm truncate ${darkMode ? 'text-white' : 'text-slate-900'}`}>{report.reference}</div>
-                  <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                    {new Date(report.reconciliation_date).toLocaleDateString()} • {report.total_records} records
+          <>
+            {reports.map((report, index) => (
+              <div key={report.id} className={`flex items-center justify-between p-4 ${darkMode ? 'bg-slate-700/50 hover:bg-slate-700' : 'bg-slate-50 hover:bg-slate-100'} rounded-lg transition-all duration-200 cursor-pointer border ${darkMode ? 'border-slate-600' : 'border-slate-200'} hover:shadow-md hover:scale-[1.02] animate-in slide-in-from-left-4 duration-500`} style={{ animationDelay: `${index * 100}ms` }}>
+                <div className="flex items-center gap-4 flex-1 min-w-0">
+                  <div className="p-2 bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg shadow-sm">
+                    <FileText className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className={`font-semibold text-sm truncate ${darkMode ? 'text-white' : 'text-slate-900'}`}>{report.reference}</div>
+                    <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                      {new Date(report.reconciliation_date).toLocaleDateString()} • {report.total_records} records
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-4 flex-shrink-0">
-                <div className="text-right">
-                  <div className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatCurrency(Math.abs(report.net_change))}</div>
-                  <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{report.discrepancies} discrepancies</div>
+                <div className="flex items-center gap-4 flex-shrink-0">
+                  <div className="text-right">
+                    <div className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatCurrency(Math.abs(report.net_change))}</div>
+                    <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{report.discrepancies} discrepancies</div>
+                  </div>
+                  <CheckCircle2 className="w-5 h-5 text-green-600 animate-pulse" />
                 </div>
-                <CheckCircle2 className="w-5 h-5 text-green-600 animate-pulse" />
               </div>
-            </div>
-          ))
+            ))}
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-slate-200">
+                <button
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage === 1}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    currentPage === 1
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  Previous
+                </button>
+
+                <span className={`text-sm px-3 py-1 rounded-md ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                  Page {currentPage} of {totalPages}
+                </span>
+
+                <button
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                  disabled={currentPage === totalPages}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    currentPage === totalPages
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         )}
         </div>
       )}

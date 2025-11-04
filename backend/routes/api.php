@@ -27,8 +27,13 @@ Route::get('/users', function() {
 });
 
 Route::post('/reconcile', [ReconciliationController::class, 'reconcile']);
+Route::post('/reconcile-manual', [ReconciliationController::class, 'reconcileManual']);
+Route::post('/export-pdf', [ReconciliationController::class, 'exportPdf']);
+Route::post('/export-data', [ReconciliationController::class, 'exportData']);
 Route::post('/download-report', [ReconciliationController::class, 'downloadReport']);
 Route::post('/email-report', [ReconciliationController::class, 'emailReport']);
 Route::get('/reports', [ReconciliationController::class, 'getReports']);
 Route::get('/reports/{reference}', [ReconciliationController::class, 'getReport']);
 Route::get('/discrepancy-trends', [ReconciliationController::class, 'getDiscrepancyTrends']);
+Route::get('/transactions', [ReconciliationController::class, 'getTransactions']);
+Route::get('/transaction-summary', [ReconciliationController::class, 'getTransactionSummary']);
