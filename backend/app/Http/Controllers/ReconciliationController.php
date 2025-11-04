@@ -815,6 +815,36 @@ class ReconciliationController extends Controller
     }
 
     /**
+     * Generate statement (filter transactions)
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function generateStatement(Request $request)
+    {
+        try {
+            $request->validate([
+                'start_date' => 'nullable|date',
+                'end_date' => 'nullable|date',
+            ]);
+
+            // This endpoint just validates the filters and returns success
+            // The actual filtering happens in the frontend when fetching transactions
+            return response()->json([
+                'message' => 'Statement filters applied successfully',
+                'filters' => [
+                    'start_date' => $request->input('start_date'),
+                    'end_date' => $request->input('end_date'),
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Statement generation failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Failed to generate statement: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Export PDF report
      *
      * @param Request $request

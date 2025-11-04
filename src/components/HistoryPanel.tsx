@@ -6,7 +6,7 @@ import { HistoryItem } from '../hooks/useReconciliation';
 // Lazy load TrendsChart
 const TrendsChart = lazy(() => import('./TrendsChart').then(module => ({ default: module.TrendsChart })));
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL;
+const API_BASE = 'http://127.0.0.1:8001/api';
 
 interface ReconciliationReport {
   id: number;

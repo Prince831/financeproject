@@ -28,6 +28,7 @@ Route::get('/users', function() {
 
 Route::post('/reconcile', [ReconciliationController::class, 'reconcile']);
 Route::post('/reconcile-manual', [ReconciliationController::class, 'reconcileManual']);
+Route::get('/generate-statement', [ReconciliationController::class, 'generateStatement']);
 Route::post('/export-pdf', [ReconciliationController::class, 'exportPdf']);
 Route::post('/export-data', [ReconciliationController::class, 'exportData']);
 Route::post('/download-report', [ReconciliationController::class, 'downloadReport']);
