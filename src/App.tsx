@@ -243,23 +243,25 @@ export default function App() {
   return (
     <div className="w-full min-h-screen relative overflow-hidden">
       {/* Npontu Technologies Header */}
-      <div className="relative bg-gradient-to-r from-npontu-600 via-npontu-500 to-npontu-700 text-white">
+      <div className="relative bg-gradient-to-r from-blue-600 via-blue-700 to-blue-800 text-white">
         <div className="absolute inset-0 bg-black/10"></div>
         <div className="relative max-w-7xl mx-auto px-6 py-8">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-lg">
-                <div className="w-8 h-8 bg-gradient-to-br from-npontu-500 to-npontu-700 rounded-md"></div>
+                <svg viewBox="0 0 24 24" className="w-8 h-8 text-blue-600" fill="currentColor">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
               </div>
               <div>
                 <h1 className="text-2xl font-display font-bold">Npontu Technologies</h1>
-                <p className="text-npontu-100 text-sm">Financial Technology Solutions</p>
+                <p className="text-blue-100 text-sm">Financial Technology Solutions</p>
               </div>
             </div>
             <div className="flex items-center space-x-4">
               <div className="hidden md:flex items-center space-x-2">
-                <span className="text-npontu-100 text-sm">Welcome, {user?.name}</span>
-                <div className="w-8 h-8 bg-npontu-400 rounded-full flex items-center justify-center">
+                <span className="text-blue-100 text-sm">Welcome, {user?.name}</span>
+                <div className="w-8 h-8 bg-blue-400 rounded-full flex items-center justify-center">
                   <span className="text-xs font-semibold">{user?.name?.charAt(0).toUpperCase()}</span>
                 </div>
               </div>
@@ -289,8 +291,8 @@ export default function App() {
         </div>
 
         {/* Statement Filters Card */}
-        <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden transform hover:scale-[1.02] transition-all duration-300">
-          <div className="bg-gradient-to-r from-npontu-500 to-npontu-600 p-6 relative overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-floating border border-blue-200 overflow-hidden transform hover:scale-[1.02] transition-all duration-300">
+          <div className="bg-gradient-to-r from-blue-500 to-blue-600 p-6 relative overflow-hidden">
             <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
             <div className="relative flex items-center space-x-3">
               <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
@@ -352,7 +354,7 @@ export default function App() {
                         </label>
                         <input
                           type="date"
-                          className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
+                          className="w-full px-4 py-3 border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                           value={startDate}
                           onChange={(e) => setStartDate(e.target.value)}
                         />
@@ -364,7 +366,7 @@ export default function App() {
                         </label>
                         <input
                           type="date"
-                          className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
+                          className="w-full px-4 py-3 border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                           value={endDate}
                           onChange={(e) => setEndDate(e.target.value)}
                         />
@@ -376,7 +378,7 @@ export default function App() {
                         </label>
                         <input
                           type="number"
-                          className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
+                          className="w-full px-4 py-3 border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                           value={dateTolerance}
                           onChange={(e) => setDateTolerance(e.target.value)}
                           placeholder="0"
@@ -390,7 +392,7 @@ export default function App() {
                         <input
                           type="number"
                           step="0.01"
-                          className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
+                          className="w-full px-4 py-3 border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                           value={amountTolerance}
                           onChange={(e) => setAmountTolerance(e.target.value)}
                           placeholder="0.00"
@@ -421,7 +423,7 @@ export default function App() {
                       console.error('Statement generation error:', err);
                     }
                   }}
-                  className="w-full bg-gradient-to-r from-npontu-500 to-npontu-600 text-white py-3 px-6 rounded-xl hover:from-npontu-600 hover:to-npontu-700 focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:ring-offset-2 transition-all duration-300 font-semibold font-display shadow-card hover:scale-[1.02]"
+                  className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-3 px-6 rounded-xl hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 font-semibold font-display shadow-card hover:scale-[1.02]"
                 >
                   Generate Statement
                 </button>
@@ -431,8 +433,8 @@ export default function App() {
         </div>
 
         {/* System Entries Card */}
-        <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden transform hover:scale-[1.02] transition-all duration-300">
-          <div className="bg-gradient-to-r from-accent to-green-700 p-6 relative overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-floating border border-blue-200 overflow-hidden transform hover:scale-[1.02] transition-all duration-300">
+          <div className="bg-gradient-to-r from-blue-500 to-green-600 p-6 relative overflow-hidden">
             <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
             <div className="relative flex items-center space-x-3">
               <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
@@ -466,7 +468,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <label className="bg-gradient-accent text-white py-3 px-6 rounded-xl hover:shadow-floating focus:outline-none focus:ring-2 focus:ring-professional-blue-500 focus:ring-offset-2 transition-all duration-300 font-semibold font-display shadow-card flex items-center cursor-pointer hover:scale-[1.02]">
+              <label className="bg-gradient-to-r from-blue-500 to-blue-600 text-white py-3 px-6 rounded-xl hover:shadow-floating focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 font-semibold font-display shadow-card flex items-center cursor-pointer hover:scale-[1.02]">
                 {uploading ? (
                   <>
                     <Loader2 className="w-5 h-5 mr-2 animate-spin" />
@@ -535,7 +537,7 @@ export default function App() {
               <button
                 onClick={handleReconcile}
                 disabled={reconciling}
-                className="bg-gradient-to-r from-accent to-purple-700 text-white py-3 px-6 rounded-xl hover:from-accent hover:to-purple-800 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 transition-all duration-300 font-semibold shadow-floating flex items-center disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02]"
+                className="bg-gradient-to-r from-blue-500 to-purple-600 text-white py-3 px-6 rounded-xl hover:from-blue-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 font-semibold shadow-floating flex items-center disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02]"
               >
                 {reconciling ? (
                   <>
@@ -607,12 +609,12 @@ export default function App() {
           </div>
 
           {/* Transaction Table */}
-          <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden transform hover:scale-[1.01] transition-all duration-300">
-            <div className="bg-gradient-to-r from-npontu-600 to-npontu-800 p-6 relative overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-floating border border-blue-200 overflow-hidden transform hover:scale-[1.01] transition-all duration-300">
+            <div className="bg-gradient-to-r from-blue-600 to-blue-800 p-6 relative overflow-hidden">
               <div className="absolute inset-0 bg-black/10 backdrop-blur-sm"></div>
               <div className="relative">
                 <h3 className="text-xl font-semibold text-white font-display">Npontu Technologies</h3>
-                <p className="text-npontu-100 text-sm mt-1">Professional Account Statement Details</p>
+                <p className="text-blue-100 text-sm mt-1">Professional Account Statement Details</p>
               </div>
             </div>
             <div className="p-8">
@@ -660,8 +662,8 @@ export default function App() {
               </div>
 
               {/* Summary Row */}
-              <div className="mt-8 bg-gradient-card p-6 rounded-xl border border-npontu-200 shadow-inner-warm">
-                <h4 className="text-lg font-semibold text-npontu-900 mb-6 text-center font-display">Transaction Summary</h4>
+              <div className="mt-8 bg-gradient-card p-6 rounded-xl border border-blue-200 shadow-inner-warm">
+                <h4 className="text-lg font-semibold text-blue-900 mb-6 text-center font-display">Transaction Summary</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="text-center p-4 bg-red-50 rounded-xl border border-red-200 shadow-card">
                     <div className="text-sm text-red-600 font-medium mb-2">Total Debits</div>
@@ -671,9 +673,9 @@ export default function App() {
                     <div className="text-sm text-green-600 font-medium mb-2">Total Credits</div>
                     <div className="text-3xl font-bold text-green-700">{summary ? formatCurrency(summary.total_credit_amount) : '€0.00'}</div>
                   </div>
-                  <div className="text-center p-4 bg-npontu-50 rounded-xl border border-npontu-200 shadow-card">
-                    <div className="text-sm text-npontu-600 font-medium mb-2">Net Change</div>
-                    <div className="text-3xl font-bold text-npontu-700">{summary ? formatCurrency(summary.total_credit_amount - summary.total_debit_amount) : '€0.00'}</div>
+                  <div className="text-center p-4 bg-blue-50 rounded-xl border border-blue-200 shadow-card">
+                    <div className="text-sm text-blue-600 font-medium mb-2">Net Change</div>
+                    <div className="text-3xl font-bold text-blue-700">{summary ? formatCurrency(summary.total_credit_amount - summary.total_debit_amount) : '€0.00'}</div>
                   </div>
                 </div>
               </div>
