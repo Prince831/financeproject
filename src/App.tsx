@@ -71,7 +71,7 @@ export default function App() {
   const [totalPages, setTotalPages] = useState(1);
   const [perPage] = useState(10);
 
-  const API_BASE = 'http://127.0.0.1:8001/api';
+  const API_BASE = 'http://127.0.0.1:8002/api';
 
   // Fetch transactions and summary on component mount and when filters change
   useEffect(() => {

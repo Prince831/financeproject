@@ -21,7 +21,7 @@ class UserSeeder extends Seeder
             [
                 'name' => 'Admin User',
                 'email' => 'admin@npontu.com',
-                'password' => Hash::make('password123'),
+                'password' => Hash::make('Password123'),
                 'email_verified_at' => now(),
             ]
         );
@@ -31,17 +31,17 @@ class UserSeeder extends Seeder
             [
                 'name' => 'John Finance',
                 'email' => 'john.finance@npontu.com',
-                'password' => Hash::make('finance123'),
+                'password' => Hash::make('Finance123'),
             ],
             [
                 'name' => 'Sarah Accounting',
                 'email' => 'sarah.accounting@npontu.com',
-                'password' => Hash::make('accounting123'),
+                'password' => Hash::make('Accounting123'),
             ],
             [
                 'name' => 'Mike Operations',
                 'email' => 'mike.operations@npontu.com',
-                'password' => Hash::make('operations123'),
+                'password' => Hash::make('Operations123'),
             ],
         ];
 
@@ -54,9 +54,9 @@ class UserSeeder extends Seeder
 
         $this->command->info('User seeder completed successfully!');
         $this->command->info('Test accounts created:');
-        $this->command->info('- admin@npontu.com (password: password123)');
-        $this->command->info('- john.finance@npontu.com (password: finance123)');
-        $this->command->info('- sarah.accounting@npontu.com (password: accounting123)');
-        $this->command->info('- mike.operations@npontu.com (password: operations123)');
+        $this->command->info('- admin@npontu.com (password: Password123)');
+        $this->command->info('- john.finance@npontu.com (password: Finance123)');
+        $this->command->info('- sarah.accounting@npontu.com (password: Accounting123)');
+        $this->command->info('- mike.operations@npontu.com (password: Operations123)');
     }
 }

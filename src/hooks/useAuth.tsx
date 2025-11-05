@@ -23,7 +23,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE = 'http://localhost:8001/api';
+const API_BASE = 'http://127.0.0.1:8002/api';
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
