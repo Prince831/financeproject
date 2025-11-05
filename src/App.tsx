@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileText, RefreshCcw, Calendar, DollarSign, Filter, Loader2, AlertCircle } from "lucide-react";
+import { Upload, FileText, RefreshCcw, Calendar, DollarSign, Filter, Loader2, AlertCircle, LogOut } from "lucide-react";
 import axios from 'axios';
+import { useAuth } from './hooks/useAuth';
+import AuthPage from './components/AuthPage';
 
 interface Transaction {
   id: number;
@@ -32,6 +34,25 @@ interface TransactionSummary {
 }
 
 export default function App() {
+  const { isAuthenticated, user, logout, isLoading: authLoading } = useAuth();
+
+  // Show auth page if not authenticated
+  if (!isAuthenticated && !authLoading) {
+    return <AuthPage />;
+  }
+
+  // Show loading while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-npontu-50 via-white to-professional-blue-50">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-npontu-200 border-t-npontu-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-npontu-600 font-medium">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [dateTolerance, setDateTolerance] = useState('');
@@ -48,7 +69,7 @@ export default function App() {
   const [reconciliationResults, setReconciliationResults] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [perPage] = useState(50);
+  const [perPage] = useState(10);
 
   const API_BASE = 'http://127.0.0.1:8001/api';
 
@@ -235,11 +256,20 @@ export default function App() {
                 <p className="text-npontu-100 text-sm">Financial Technology Solutions</p>
               </div>
             </div>
-            <div className="hidden md:flex items-center space-x-6">
-              <span className="text-npontu-100">Reconciliation Portal</span>
-              <div className="w-8 h-8 bg-npontu-400 rounded-full flex items-center justify-center">
-                <span className="text-xs font-semibold">NT</span>
+            <div className="flex items-center space-x-4">
+              <div className="hidden md:flex items-center space-x-2">
+                <span className="text-npontu-100 text-sm">Welcome, {user?.name}</span>
+                <div className="w-8 h-8 bg-npontu-400 rounded-full flex items-center justify-center">
+                  <span className="text-xs font-semibold">{user?.name?.charAt(0).toUpperCase()}</span>
+                </div>
               </div>
+              <button
+                onClick={logout}
+                className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden md:inline text-sm">Logout</span>
+              </button>
             </div>
           </div>
         </div>

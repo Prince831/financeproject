@@ -2,6 +2,7 @@ import React from 'react';
 
 interface NpontuInputProps {
   type?: 'text' | 'email' | 'password' | 'number' | 'date' | 'tel' | 'url';
+  name?: string;
   placeholder?: string;
   value?: string | number;
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -54,6 +55,7 @@ const NpontuInput: React.FC<NpontuInputProps> = ({
         )}
         <input
           type={type}
+          name={name}
           placeholder={placeholder}
           value={value}
           onChange={onChange}
