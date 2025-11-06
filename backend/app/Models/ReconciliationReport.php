@@ -22,6 +22,7 @@ class ReconciliationReport extends Model
         'matched_records',
         'discrepancies',
         'discrepancy_details',
+        'detailed_records',
         'status',
     ];
 
@@ -33,5 +34,6 @@ class ReconciliationReport extends Model
         'total_credit' => 'decimal:2',
         'net_change' => 'decimal:2',
         'discrepancy_details' => 'array',
+        'detailed_records' => 'array',
     ];
 }

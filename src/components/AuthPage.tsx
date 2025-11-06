@@ -129,47 +129,33 @@ const AuthPage: React.FC = () => {
     setTouched({});
   };
 
-  const getPasswordStrength = (password: string) => {
-    if (!password) return 0;
-    let strength = 0;
-    if (password.length >= 8) strength++;
-    if (/[a-z]/.test(password)) strength++;
-    if (/[A-Z]/.test(password)) strength++;
-    if (/\d/.test(password)) strength++;
-    if (/[^a-zA-Z\d]/.test(password)) strength++;
-    return strength;
-  };
-
-  const passwordStrength = getPasswordStrength(formData.password);
-  const passwordStrengthText = ['Very Weak', 'Weak', 'Fair', 'Good', 'Strong'][passwordStrength - 1] || '';
-  const passwordStrengthColor = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500'][passwordStrength - 1] || '';
 
   return (
-    <div className="min-h-screen w-full relative overflow-hidden bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-5">
-        <div className="absolute inset-0" style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23374151' fill-opacity='0.03'%3E%3Ccircle cx='50' cy='50' r='1.5'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-        }} />
-      </div>
-
-      {/* Floating Elements */}
-      <div className="absolute top-16 left-16 w-32 h-32 bg-blue-100 rounded-full opacity-60 animate-pulse"></div>
-      <div className="absolute bottom-16 right-16 w-40 h-40 bg-indigo-100 rounded-full opacity-40 animate-pulse" style={{ animationDelay: '1s' }}></div>
-      <div className="absolute top-1/3 right-1/4 w-24 h-24 bg-purple-100 rounded-full opacity-50 animate-pulse" style={{ animationDelay: '2s' }}></div>
-      <div className="absolute bottom-1/3 left-1/3 w-20 h-20 bg-cyan-100 rounded-full opacity-70 animate-pulse" style={{ animationDelay: '0.5s' }}></div>
+    <div className="min-h-screen w-full relative overflow-hidden">
+      {/* Background Image */}
+      <div
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat filter blur-sm"
+        style={{
+          backgroundImage: `url('/images/npontu-logo.png')`,
+        }}
+      />
+      <div className="absolute inset-0 bg-white bg-opacity-90" />
 
       <div className="relative w-full max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 min-h-screen flex items-center justify-center py-8">
         <div className="w-full max-w-lg">
           {/* Header */}
           <div className="text-center mb-10">
             <div className="inline-flex items-center justify-center w-24 h-24 bg-white rounded-3xl shadow-xl mb-8 border border-gray-100">
-              <NpontuLogo size="xl" />
+              <img
+                src="/images/npontu-logo.png"
+                alt="Npontu Technologies Logo"
+                className="w-16 h-16 object-contain"
+              />
             </div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-3 tracking-tight">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-3 tracking-tight">
               {isLogin ? 'Welcome Back' : 'Join Npontu'}
             </h1>
-            <p className="text-gray-600 text-lg leading-relaxed">
+            <p className="text-gray-600 text-base sm:text-lg leading-relaxed">
               {isLogin
                 ? 'Sign in to access your reconciliation dashboard'
                 : 'Create your account and start reconciling today'
@@ -274,47 +260,6 @@ const AuthPage: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Password Strength Indicator */}
-                {formData.password && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600 font-medium">Password strength</span>
-                      <span className={`text-sm font-semibold ${
-                        passwordStrength <= 2 ? 'text-red-600' :
-                        passwordStrength <= 3 ? 'text-yellow-600' :
-                        passwordStrength <= 4 ? 'text-blue-600' : 'text-green-600'
-                      }`}>
-                        {passwordStrengthText}
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ease-out ${passwordStrengthColor} ${
-                          passwordStrength >= 4 ? 'shadow-sm' : ''
-                        }`}
-                        style={{ width: `${(passwordStrength / 5) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
-                      <div className="flex items-center space-x-1">
-                        <div className={`w-2 h-2 rounded-full ${formData.password.length >= 8 ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                        <span>8+ characters</span>
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <div className={`w-2 h-2 rounded-full ${/[A-Z]/.test(formData.password) ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                        <span>Uppercase</span>
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <div className={`w-2 h-2 rounded-full ${/[a-z]/.test(formData.password) ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                        <span>Lowercase</span>
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <div className={`w-2 h-2 rounded-full ${/\d/.test(formData.password) ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                        <span>Number</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {validationErrors.password && touched.password && (
                   <div className="flex items-center space-x-2 text-red-600">
@@ -397,13 +342,10 @@ const AuthPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={isLoading || !formData.email || !formData.password || (!isLogin && (!formData.name || !formData.password_confirmation))}
-                className="w-full bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white py-4 px-8 rounded-2xl font-bold text-lg hover:from-blue-700 hover:via-blue-800 hover:to-indigo-800 focus:outline-none focus:ring-4 focus:ring-blue-200 focus:ring-offset-2 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3 shadow-xl hover:shadow-2xl transform hover:-translate-y-1 disabled:hover:transform-none group"
+                className="w-full bg-gradient-to-r from-lime-600 via-lime-700 to-lime-800 text-white py-4 px-8 rounded-2xl font-bold text-lg hover:from-lime-700 hover:via-lime-800 hover:to-lime-900 focus:outline-none focus:ring-4 focus:ring-lime-300 focus:ring-offset-2 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3 shadow-xl hover:shadow-2xl transform hover:-translate-y-1 disabled:hover:transform-none group"
               >
                 {isLoading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-6 w-6 border-3 border-white border-t-transparent"></div>
-                    <span className="font-semibold">{isLogin ? 'Signing In...' : 'Creating Account...'}</span>
-                  </>
+                  <span className="font-semibold">{isLogin ? 'Signing In...' : 'Creating Account...'}</span>
                 ) : (
                   <>
                     <Sparkles className="w-6 h-6 group-hover:animate-pulse" />

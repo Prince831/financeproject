@@ -6,13 +6,25 @@ interface DiscrepanciesTableProps {
   discrepancies: Discrepancy[];
   darkMode: boolean;
   getSeverityColor: (severity: string) => string;
+  currentPage?: number;
+  setCurrentPage?: (page: number) => void;
+  totalPages?: number;
+  itemsPerPage?: number;
 }
 
 export const DiscrepanciesTable: React.FC<DiscrepanciesTableProps> = ({
   discrepancies,
   darkMode,
   getSeverityColor,
+  currentPage = 1,
+  setCurrentPage,
+  totalPages = 1,
+  itemsPerPage = 25,
 }) => {
+  // Calculate pagination
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedDiscrepancies = discrepancies.slice(startIndex, endIndex);
   return (
     <div className="mt-6 overflow-x-auto">
       <div className={`rounded-xl border ${darkMode ? 'border-slate-600' : 'border-slate-200'} overflow-hidden shadow-sm`}>
@@ -40,7 +52,7 @@ export const DiscrepanciesTable: React.FC<DiscrepanciesTableProps> = ({
                 </td>
               </tr>
             )}
-            {discrepancies.map((d, index) => (
+            {paginatedDiscrepancies.map((d, index) => (
               <tr key={`${d.id}-${index}`} className={`transition-colors ${darkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50'}`}>
                 <td className={`border-b ${darkMode ? 'border-slate-600 text-white' : 'border-slate-200 text-slate-900'} px-4 py-3 font-medium`}>{d.id}</td>
                 <td className={`border-b ${darkMode ? 'border-slate-600 text-white' : 'border-slate-200 text-slate-900'} px-4 py-3`}>{d.account}</td>
@@ -72,6 +84,36 @@ export const DiscrepanciesTable: React.FC<DiscrepanciesTableProps> = ({
           </tbody>
         </table>
       </div>
+
+      {/* Pagination Controls */}
+      {setCurrentPage && totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            Showing {startIndex + 1}-{Math.min(endIndex, discrepancies.length)} of {discrepancies.length} discrepancies
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 text-sm bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+
+            <span className="text-sm text-gray-600">
+              Page {currentPage} of {totalPages}
+            </span>
+
+            <button
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 text-sm bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

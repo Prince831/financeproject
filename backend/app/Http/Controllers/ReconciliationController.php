@@ -6,13 +6,49 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Cache;
 use App\Models\User;
 use App\Models\ReconciliationReport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
+use Smalot\PdfParser\Parser;
 
 class ReconciliationController extends Controller
 {
+    /**
+     * Update reconciliation progress
+     *
+     * @param string $sessionId
+     * @param array $progress
+     */
+    private function updateProgress($sessionId, $progress)
+    {
+        Cache::put("reconciliation_progress_{$sessionId}", $progress, 300); // 5 minutes
+    }
+
+    /**
+     * Get reconciliation progress
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getProgress(Request $request)
+    {
+        $sessionId = $request->input('session_id');
+        if (!$sessionId) {
+            return response()->json(['error' => 'Session ID required'], 400);
+        }
+
+        $progress = Cache::get("reconciliation_progress_{$sessionId}", [
+            'step' => 'idle',
+            'progress' => 0,
+            'message' => 'Ready to start',
+            'completed' => false
+        ]);
+
+        return response()->json($progress);
+    }
+
     /**
      * Handle manual reconciliation (without file upload)
      *
@@ -60,27 +96,56 @@ class ReconciliationController extends Controller
             // Add metadata
             $result['comparisonTime'] = round(microtime(true) - $startTime, 2) . ' seconds';
             $result['timestamp'] = now()->toISOString();
-            $result['user'] = 'Anonymous';
+            $result['user'] = $request->user()->name;
 
             // Save reconciliation report to database
             $reference = 'MANUAL-' . now()->format('Ymd-His') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
 
-            ReconciliationReport::create([
+            // Debug logging
+            Log::info('Creating reconciliation report', [
                 'reference' => $reference,
-                'reconciliation_date' => now(),
                 'total_debit' => $result['totalDebitVariance'] ?? 0,
                 'total_credit' => $result['totalCreditVariance'] ?? 0,
                 'net_change' => $result['netVariance'] ?? 0,
-                'reconciliation_mode' => $mode,
-                'period_start' => $mode === 'by_period' ? $startDate : null,
-                'period_end' => $mode === 'by_period' ? $endDate : null,
                 'total_records' => $result['totalRecords'],
-                'matched_records' => $result['matched'],
                 'discrepancies' => $result['discrepancies'],
-                'discrepancy_details' => $result['records'],
-                'detailed_records' => $result['detailedRecords'] ?? [],
-                'status' => 'completed',
+                'records_count' => count($result['records'] ?? []),
             ]);
+
+            try {
+                ReconciliationReport::create([
+                    'reference' => $reference,
+                    'reconciliation_date' => now(),
+                    'total_debit' => (float) ($result['totalDebitVariance'] ?? 0),
+                    'total_credit' => (float) ($result['totalCreditVariance'] ?? 0),
+                    'net_change' => (float) ($result['netVariance'] ?? 0),
+                    'reconciliation_mode' => $mode,
+                    'period_start' => $mode === 'by_period' ? $startDate : null,
+                    'period_end' => $mode === 'by_period' ? $endDate : null,
+                    'total_records' => (int) $result['totalRecords'],
+                    'matched_records' => (int) $result['matched'],
+                    'discrepancies' => (int) $result['discrepancies'],
+                    'discrepancy_details' => $result['records'],
+                    'detailed_records' => $result['detailedRecords'] ?? [],
+                    'status' => 'completed',
+                ]);
+                Log::info('Reconciliation report created successfully', ['reference' => $reference]);
+            } catch (\Exception $dbError) {
+                Log::error('Failed to create reconciliation report', [
+                    'error' => $dbError->getMessage(),
+                    'reference' => $reference,
+                    'data' => [
+                        'total_debit' => (float) ($result['totalDebitVariance'] ?? 0),
+                        'total_credit' => (float) ($result['totalCreditVariance'] ?? 0),
+                        'net_change' => (float) ($result['netVariance'] ?? 0),
+                        'total_records' => (int) $result['totalRecords'],
+                        'matched_records' => (int) $result['matched'],
+                        'discrepancies' => (int) $result['discrepancies'],
+                    ]
+                ]);
+                // Continue without saving to database for now
+                Log::info('Continuing without database save');
+            }
 
             // Add reference to result
             $result['reference'] = $reference;
@@ -102,8 +167,11 @@ class ReconciliationController extends Controller
                 'file' => $e->getFile()
             ]);
 
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+
             return response()->json([
-                'message' => 'Manual reconciliation failed: ' . $e->getMessage(),
+                'message' => $userFriendlyMessage,
+                'error_type' => 'reconciliation_processing_error',
                 'error_details' => [
                     'type' => get_class($e),
                     'line' => $e->getLine(),
@@ -256,6 +324,7 @@ class ReconciliationController extends Controller
     public function reconcile(Request $request)
     {
         $startTime = microtime(true);
+        $sessionId = $request->input('session_id', uniqid('rec_', true));
 
         try {
             Log::info('Starting reconciliation process', [
@@ -264,19 +333,28 @@ class ReconciliationController extends Controller
                 'mode' => $request->input('mode'),
                 'start_date' => $request->input('start_date'),
                 'end_date' => $request->input('end_date'),
+                'session_id' => $sessionId,
                 'all_input' => $request->all()
+            ]);
+
+            // Initialize progress
+            $this->updateProgress($sessionId, [
+                'step' => 'initializing',
+                'progress' => 5,
+                'message' => 'Initializing reconciliation process...',
+                'completed' => false
             ]);
 
             try {
                 $request->validate([
-                    'file' => 'required|file|mimes:xlsx,xls,csv,txt|max:5120', // 5MB max for faster processing
+                    'file' => 'required|file|mimes:xlsx,xls,csv,txt,pdf|max:5120', // 5MB max for faster processing
                     'mode' => 'required|in:by_period,by_transaction_id',
                     'start_date' => 'nullable|date|required_if:mode,by_period',
                     'end_date' => 'nullable|date|required_if:mode,by_period|after_or_equal:start_date',
                 ], [
                     'file.required' => 'A file must be uploaded for reconciliation.',
                     'file.file' => 'The uploaded item must be a valid file.',
-                    'file.mimes' => 'Only CSV, XLS, XLSX, and TXT files are accepted.',
+                    'file.mimes' => 'Only CSV, XLS, XLSX, TXT, and PDF files are accepted.',
                     'file.max' => 'File size must not exceed 5MB.',
                     'mode.required' => 'Reconciliation mode is required.',
                     'mode.in' => 'Invalid reconciliation mode selected.',
@@ -296,8 +374,13 @@ class ReconciliationController extends Controller
                     'errors' => $e->errors(),
                     'file' => $request->hasFile('file') ? $request->file('file')->getClientOriginalName() : null
                 ]);
+
+                $userFriendlyErrors = $this->formatValidationErrors($e->errors());
+
                 return response()->json([
-                    'error' => 'Validation failed',
+                    'message' => 'Please correct the following issues and try again.',
+                    'error_type' => 'validation_error',
+                    'validation_errors' => $userFriendlyErrors,
                     'details' => $e->errors()
                 ], 422);
             }
@@ -313,11 +396,27 @@ class ReconciliationController extends Controller
                 'mode' => $mode
             ]);
 
+            // Update progress: File upload complete
+            $this->updateProgress($sessionId, [
+                'step' => 'upload_complete',
+                'progress' => 15,
+                'message' => 'File uploaded successfully, preparing for processing...',
+                'completed' => false
+            ]);
+
             // Store file temporarily
             $path = $file->store('temp', 'local');
             $fullPath = storage_path('app/' . $path);
 
             Log::info('File stored temporarily', ['path' => $path, 'full_path' => $fullPath]);
+
+            // Update progress: File storage complete
+            $this->updateProgress($sessionId, [
+                'step' => 'file_stored',
+                'progress' => 25,
+                'message' => 'File stored securely, starting parsing...',
+                'completed' => false
+            ]);
 
             // Parse file based on type
             $documentData = $this->parseFile($fullPath, $extension);
@@ -327,9 +426,28 @@ class ReconciliationController extends Controller
                 'sample_record' => !empty($documentData) ? array_slice($documentData, 0, 1) : null
             ]);
 
+            // Update progress: Parsing complete
+            $this->updateProgress($sessionId, [
+                'step' => 'parsing_complete',
+                'progress' => 45,
+                'message' => 'File parsed successfully (' . count($documentData) . ' records found), validating data...',
+                'completed' => false
+            ]);
+
             if (empty($documentData)) {
                 throw new \Exception('No data found in uploaded file');
             }
+
+            // Validate file content structure and required columns
+            $this->validateFileContent($documentData);
+
+            // Update progress: Validation complete
+            $this->updateProgress($sessionId, [
+                'step' => 'validation_complete',
+                'progress' => 55,
+                'message' => 'Data validation completed, preparing for reconciliation...',
+                'completed' => false
+            ]);
 
             // Only limit processing for period-based reconciliation to maintain performance
             if ($mode === 'by_period' && count($documentData) > 500) {
@@ -341,13 +459,29 @@ class ReconciliationController extends Controller
                 Log::info('Processing all records for transaction ID based reconciliation', ['record_count' => count($documentData)]);
             }
 
+            // Update progress: Starting reconciliation
+            $this->updateProgress($sessionId, [
+                'step' => 'reconciliation_start',
+                'progress' => 65,
+                'message' => 'Starting reconciliation process...',
+                'completed' => false
+            ]);
+
             // Perform reconciliation against database
             $result = $this->performReconciliation($documentData, $mode, $request->input('start_date'), $request->input('end_date'));
+
+            // Update progress: Reconciliation processing
+            $this->updateProgress($sessionId, [
+                'step' => 'reconciliation_processing',
+                'progress' => 85,
+                'message' => 'Processing reconciliation data...',
+                'completed' => false
+            ]);
 
             // Add metadata
             $result['comparisonTime'] = round(microtime(true) - $startTime, 2) . ' seconds';
             $result['timestamp'] = now()->toISOString();
-            $result['user'] = 'Anonymous'; // Remove auth check for unauthenticated access
+            $result['user'] = $request->user()->name;
 
             // Save reconciliation report to database
             $reference = 'REC-' . now()->format('Ymd-His') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
@@ -375,6 +509,15 @@ class ReconciliationController extends Controller
             // Clean up temp file
             Storage::disk('local')->delete($path);
 
+            // Update progress: Complete
+            $this->updateProgress($sessionId, [
+                'step' => 'complete',
+                'progress' => 100,
+                'message' => 'Reconciliation completed successfully! Found ' . ($result['discrepancies'] ?? 0) . ' discrepancies.',
+                'completed' => true,
+                'result' => $result
+            ]);
+
             Log::info('Reconciliation completed successfully', [
                 'file' => $file->getClientOriginalName(),
                 'reference' => $reference,
@@ -386,6 +529,15 @@ class ReconciliationController extends Controller
             return response()->json($result);
 
         } catch (\Exception $e) {
+            // Update progress: Error occurred
+            $this->updateProgress($sessionId, [
+                'step' => 'error',
+                'progress' => 0,
+                'message' => 'Reconciliation failed: ' . $this->getUserFriendlyErrorMessage($e),
+                'completed' => false,
+                'error' => true
+            ]);
+
             Log::error('Reconciliation failed', [
                 'error' => $e->getMessage(),
                 'file' => $request->hasFile('file') ? $request->file('file')->getClientOriginalName() : 'Unknown',
@@ -394,8 +546,11 @@ class ReconciliationController extends Controller
                 'file_path' => $e->getFile()
             ]);
 
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+
             return response()->json([
-                'message' => 'Reconciliation failed: ' . $e->getMessage(),
+                'message' => $userFriendlyMessage,
+                'error_type' => 'reconciliation_processing_error',
                 'error_details' => [
                     'type' => get_class($e),
                     'line' => $e->getLine(),
@@ -414,9 +569,145 @@ class ReconciliationController extends Controller
             case 'xlsx':
             case 'xls':
                 return $this->parseExcel($filePath);
+            case 'pdf':
+                return $this->parsePdf($filePath);
             default:
-                throw new \Exception('Unsupported file type. Only CSV, TXT, and Excel files are accepted.');
+                throw new \Exception('Unsupported file type. Only CSV, TXT, Excel, and PDF files are accepted.');
         }
+    }
+
+    /**
+     * Validate file content structure and required columns
+     *
+     * @param array $documentData
+     * @throws \Exception
+     */
+    private function validateFileContent($documentData)
+    {
+        if (empty($documentData)) {
+            throw new \Exception('File contains no data rows');
+        }
+
+        // Get headers from first row
+        $firstRow = $documentData[0];
+        $headers = array_keys($firstRow);
+
+        if (empty($headers)) {
+            throw new \Exception('File contains no valid column headers');
+        }
+
+        // Define required columns (case-insensitive variations)
+        $requiredColumns = [
+            'transaction_id' => ['transaction_id', 'id', 'transaction id', 'txn id', 'transactionid'],
+            'date' => ['date', 'transaction_date', 'transaction date', 'txn_date', 'txndate'],
+            'amount' => ['amount', 'debit_amount', 'credit_amount', 'debit amount', 'credit amount', 'amt']
+        ];
+
+        $missingColumns = [];
+
+        // Check for required columns
+        foreach ($requiredColumns as $field => $possibleNames) {
+            $found = false;
+            foreach ($possibleNames as $name) {
+                if (in_array(strtolower($name), array_map('strtolower', $headers))) {
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found) {
+                $missingColumns[] = ucfirst(str_replace('_', ' ', $field)) . ' (possible names: ' . implode(', ', $possibleNames) . ')';
+            }
+        }
+
+        if (!empty($missingColumns)) {
+            throw new \Exception('Missing required columns: ' . implode('; ', $missingColumns));
+        }
+
+        // Validate data structure for first few rows (sample validation)
+        $sampleSize = min(10, count($documentData)); // Check first 10 rows or all if less
+        $validationErrors = [];
+
+        for ($i = 0; $i < $sampleSize; $i++) {
+            $row = $documentData[$i];
+            $rowNumber = $i + 1;
+
+            // Validate Transaction ID
+            $transactionId = null;
+            foreach (['transaction_id', 'id', 'Transaction ID', 'Txn ID', 'Transaction Id'] as $key) {
+                if (isset($row[$key])) {
+                    $transactionId = $row[$key];
+                    break;
+                }
+            }
+
+            if (empty($transactionId)) {
+                $validationErrors[] = "Row {$rowNumber}: Missing Transaction ID";
+            }
+
+            // Validate Date
+            $dateValue = null;
+            foreach (['date', 'transaction_date', 'Date', 'Transaction Date'] as $key) {
+                if (isset($row[$key])) {
+                    $dateValue = $row[$key];
+                    break;
+                }
+            }
+
+            if (!empty($dateValue)) {
+                // Try to parse date
+                $parsedDate = date_parse($dateValue);
+                if ($parsedDate['error_count'] > 0 || !checkdate($parsedDate['month'], $parsedDate['day'], $parsedDate['year'])) {
+                    $validationErrors[] = "Row {$rowNumber}: Invalid date format '{$dateValue}'";
+                }
+            }
+
+            // Validate Amount fields
+            $amountFields = ['amount', 'Amount', 'debit_amount', 'credit_amount', 'Debit Amount', 'Credit Amount'];
+            $hasValidAmount = false;
+
+            foreach ($amountFields as $field) {
+                if (isset($row[$field]) && is_numeric($row[$field])) {
+                    $hasValidAmount = true;
+                    break;
+                }
+            }
+
+            // Check for C/D + Amount combination
+            $cdField = null;
+            $amountField = null;
+            foreach (['c/d', 'C/D', 'type', 'Type'] as $key) {
+                if (isset($row[$key])) {
+                    $cdField = $key;
+                    break;
+                }
+            }
+            foreach (['amount', 'Amount'] as $key) {
+                if (isset($row[$key])) {
+                    $amountField = $key;
+                    break;
+                }
+            }
+
+            if ($cdField && $amountField && is_numeric($row[$amountField])) {
+                $cdValue = strtoupper(trim($row[$cdField]));
+                if (in_array($cdValue, ['C', 'D'])) {
+                    $hasValidAmount = true;
+                }
+            }
+
+            if (!$hasValidAmount) {
+                $validationErrors[] = "Row {$rowNumber}: No valid amount field found";
+            }
+        }
+
+        if (!empty($validationErrors)) {
+            throw new \Exception('Data validation errors: ' . implode('; ', array_slice($validationErrors, 0, 5))); // Show first 5 errors
+        }
+
+        Log::info('File content validation passed', [
+            'total_rows' => count($documentData),
+            'columns_found' => $headers
+        ]);
     }
 
     private function parseCsv($filePath)
@@ -520,10 +811,157 @@ class ReconciliationController extends Controller
 
     private function parsePdf($filePath)
     {
-        // Basic PDF parsing - this is simplified, you might need more robust parsing
-        // For now, return empty as PDF parsing is complex
-        Log::warning('PDF parsing not fully implemented');
-        return [];
+        Log::info('Starting PDF parsing', ['file_path' => $filePath]);
+
+        try {
+            $parser = new Parser();
+            $pdf = $parser->parseFile($filePath);
+
+            $text = '';
+            // Extract text from all pages
+            foreach ($pdf->getPages() as $page) {
+                $text .= $page->getText() . "\n";
+            }
+
+            Log::info('PDF text extracted', ['text_length' => strlen($text)]);
+
+            // Parse the extracted text to find transaction data
+            $transactions = $this->parsePdfText($text);
+
+            Log::info('PDF parsing completed', ['transaction_count' => count($transactions)]);
+            return $transactions;
+
+        } catch (\Exception $e) {
+            Log::error('PDF parsing failed', [
+                'error' => $e->getMessage(),
+                'file_path' => $filePath
+            ]);
+            throw new \Exception('Failed to parse PDF: ' . $e->getMessage());
+        }
+    }
+
+    private function parsePdfText($text)
+    {
+        $transactions = [];
+        $lines = explode("\n", $text);
+
+        // Common patterns for bank statement transactions
+        $datePattern = '/(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}|\d{4}[-\/]\d{1,2}[-\/]\d{1,2})/';
+        $amountPattern = '/(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/';
+        $transactionIdPattern = '/(TXN\d+|TRN\d+|REF\d+|\d{6,})/';
+
+        $currentTransaction = [];
+        $inTransactionBlock = false;
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
+
+            // Look for date at the beginning of the line (indicates start of transaction)
+            if (preg_match($datePattern, $line, $dateMatches)) {
+                // Save previous transaction if exists
+                if (!empty($currentTransaction)) {
+                    $transactions[] = $currentTransaction;
+                }
+
+                // Start new transaction
+                $currentTransaction = [
+                    'transaction_date' => $this->normalizeDate($dateMatches[1]),
+                    'description' => '',
+                    'debit_amount' => 0,
+                    'credit_amount' => 0,
+                    'balance' => 0,
+                    'transaction_id' => '',
+                    'reference_number' => ''
+                ];
+
+                // Remove date from line for further processing
+                $line = preg_replace($datePattern, '', $line);
+                $inTransactionBlock = true;
+            }
+
+            if ($inTransactionBlock && !empty($currentTransaction)) {
+                // Look for amounts in the line
+                if (preg_match_all($amountPattern, $line, $amountMatches)) {
+                    $amounts = $amountMatches[1];
+
+                    // Typically, bank statements have debit, credit, balance
+                    if (count($amounts) >= 1) {
+                        // Try to determine which amount is which based on position and context
+                        $lineLower = strtolower($line);
+
+                        if (strpos($lineLower, 'debit') !== false || strpos($lineLower, 'dr') !== false) {
+                            $currentTransaction['debit_amount'] = (float) str_replace(',', '', $amounts[0]);
+                        } elseif (strpos($lineLower, 'credit') !== false || strpos($lineLower, 'cr') !== false) {
+                            $currentTransaction['credit_amount'] = (float) str_replace(',', '', $amounts[0]);
+                        } elseif (strpos($lineLower, 'balance') !== false || strpos($lineLower, 'bal') !== false) {
+                            $currentTransaction['balance'] = (float) str_replace(',', '', $amounts[0]);
+                        } else {
+                            // If no specific indicators, assume first amount is debit/credit, second is balance
+                            if (count($amounts) >= 2) {
+                                $currentTransaction['debit_amount'] = (float) str_replace(',', '', $amounts[0]);
+                                $currentTransaction['balance'] = (float) str_replace(',', '', $amounts[1]);
+                            } elseif (count($amounts) === 1) {
+                                // Single amount - could be debit or credit, check if negative
+                                $amount = (float) str_replace(',', '', $amounts[0]);
+                                if ($amount < 0) {
+                                    $currentTransaction['debit_amount'] = abs($amount);
+                                } else {
+                                    $currentTransaction['credit_amount'] = $amount;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Look for transaction ID
+                if (preg_match($transactionIdPattern, $line, $idMatches)) {
+                    $currentTransaction['transaction_id'] = $idMatches[1];
+                }
+
+                // Add remaining text to description
+                $cleanLine = preg_replace([$datePattern, $amountPattern, $transactionIdPattern], '', $line);
+                $cleanLine = trim($cleanLine);
+                if (!empty($cleanLine) && strlen($currentTransaction['description']) < 200) {
+                    $currentTransaction['description'] .= (empty($currentTransaction['description']) ? '' : ' ') . $cleanLine;
+                }
+            }
+        }
+
+        // Add the last transaction
+        if (!empty($currentTransaction)) {
+            $transactions[] = $currentTransaction;
+        }
+
+        // Clean up transactions - remove incomplete ones
+        $transactions = array_filter($transactions, function($transaction) {
+            return !empty($transaction['transaction_date']) &&
+                   (!empty($transaction['debit_amount']) || !empty($transaction['credit_amount']));
+        });
+
+        // Reset array keys
+        $transactions = array_values($transactions);
+
+        return $transactions;
+    }
+
+    private function normalizeDate($dateString)
+    {
+        // Try different date formats commonly found in bank statements
+        $formats = [
+            'd/m/Y', 'm/d/Y', 'Y/m/d', 'd-m-Y', 'm-d-Y', 'Y-m-d',
+            'd/m/y', 'm/d/y', 'y/m/d', 'd-m-y', 'm-d-y', 'y-m-d'
+        ];
+
+        foreach ($formats as $format) {
+            $date = \DateTime::createFromFormat($format, $dateString);
+            if ($date !== false) {
+                return $date->format('Y-m-d');
+            }
+        }
+
+        // If no format matches, return as-is
+        return $dateString;
     }
 
     private function findFieldKey($array, $fieldName)
@@ -840,7 +1278,11 @@ class ReconciliationController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Statement generation failed', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to generate statement: ' . $e->getMessage()], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'statement_generation_error'
+            ], 500);
         }
     }
 
@@ -867,7 +1309,7 @@ class ReconciliationController extends Controller
             $reportData = [
                 'reference' => 'EXPORT-' . now()->format('Ymd-His'),
                 'timestamp' => now()->toISOString(),
-                'user' => 'Anonymous',
+                'user' => $request->user()->name,
                 'comparisonTime' => 'N/A (Export)',
                 'totalRecords' => count($transactions),
                 'matched' => count($transactions), // All shown transactions are "matched"
@@ -890,7 +1332,11 @@ class ReconciliationController extends Controller
 
         } catch (\Exception $e) {
             Log::error('PDF export failed', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to export PDF: ' . $e->getMessage()], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'pdf_export_error'
+            ], 500);
         }
     }
 
@@ -965,7 +1411,11 @@ class ReconciliationController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Data export failed', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to export data: ' . $e->getMessage()], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'data_export_error'
+            ], 500);
         }
     }
 
@@ -1007,7 +1457,7 @@ class ReconciliationController extends Controller
                         'records' => $report->discrepancy_details ?? [],
                         'comparisonTime' => 'N/A (from database)',
                         'timestamp' => $report->created_at->toISOString(),
-                        'user' => 'Anonymous',
+                        'user' => $request->user()->name,
                     ];
                 }
             }
@@ -1024,7 +1474,11 @@ class ReconciliationController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Report download failed', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to generate report'], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'report_download_error'
+            ], 500);
         }
     }
 
@@ -1043,7 +1497,11 @@ class ReconciliationController extends Controller
             return response()->json($reports);
         } catch (\Exception $e) {
             Log::error('Failed to fetch reports', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to fetch reports'], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'reports_fetch_error'
+            ], 500);
         }
     }
 
@@ -1087,7 +1545,11 @@ class ReconciliationController extends Controller
             return response()->json($trends);
         } catch (\Exception $e) {
             Log::error('Failed to fetch discrepancy trends', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to fetch trends'], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'trends_fetch_error'
+            ], 500);
         }
     }
 
@@ -1110,7 +1572,11 @@ class ReconciliationController extends Controller
             return response()->json($report);
         } catch (\Exception $e) {
             Log::error('Failed to fetch report', ['error' => $e->getMessage(), 'reference' => $reference]);
-            return response()->json(['message' => 'Failed to fetch report'], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'report_fetch_error'
+            ], 500);
         }
     }
 
@@ -1123,6 +1589,16 @@ class ReconciliationController extends Controller
     public function getTransactions(Request $request)
     {
         try {
+            Log::info('getTransactions called', [
+                'all_params' => $request->all(),
+                'per_page' => $request->input('per_page', 50),
+                'page' => $request->input('page', 1),
+                'start_date' => $request->input('start_date'),
+                'end_date' => $request->input('end_date'),
+                'account_number' => $request->input('account_number'),
+                'transaction_type' => $request->input('transaction_type')
+            ]);
+
             $query = \App\Models\Transaction::query();
 
             // Apply filters
@@ -1142,19 +1618,37 @@ class ReconciliationController extends Controller
                 $query->where('transaction_type', $request->input('transaction_type'));
             }
 
-            // Pagination
-            $perPage = $request->input('per_page', 50);
+            // Pagination - limit per_page to maximum 50 for performance
+            $perPage = min((int) $request->input('per_page', 50), 50);
             $page = $request->input('page', 1);
 
+            Log::info('Query before pagination', [
+                'total_count' => $query->count(),
+                'per_page' => $perPage,
+                'page' => $page
+            ]);
+
             $transactions = $query->orderBy('transaction_date', 'desc')
-                                 ->orderBy('id', 'desc')
-                                 ->paginate($perPage, ['*'], 'page', $page);
+                                  ->orderBy('id', 'desc')
+                                  ->paginate($perPage, ['*'], 'page', $page);
+
+            Log::info('Pagination result', [
+                'returned_count' => $transactions->count(),
+                'total' => $transactions->total(),
+                'per_page' => $transactions->perPage(),
+                'current_page' => $transactions->currentPage(),
+                'last_page' => $transactions->lastPage()
+            ]);
 
             return response()->json($transactions);
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch transactions', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to fetch transactions'], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'transactions_fetch_error'
+            ], 500);
         }
     }
 
@@ -1199,7 +1693,11 @@ class ReconciliationController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch transaction summary', ['error' => $e->getMessage()]);
-            return response()->json(['message' => 'Failed to fetch summary'], 500);
+            $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
+            return response()->json([
+                'message' => $userFriendlyMessage,
+                'error_type' => 'summary_fetch_error'
+            ], 500);
         }
     }
 
@@ -1264,5 +1762,144 @@ class ReconciliationController extends Controller
             ]);
             return response()->json(['message' => 'Failed to send report: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Format validation errors into user-friendly messages
+     *
+     * @param array $errors
+     * @return array
+     */
+    private function formatValidationErrors(array $errors)
+    {
+        $formatted = [];
+
+        foreach ($errors as $field => $messages) {
+            foreach ($messages as $message) {
+                $formatted[] = [
+                    'field' => $field,
+                    'message' => $this->getUserFriendlyValidationMessage($field, $message)
+                ];
+            }
+        }
+
+        return $formatted;
+    }
+
+    /**
+     * Convert validation messages to user-friendly format
+     *
+     * @param string $field
+     * @param string $message
+     * @return string
+     */
+    private function getUserFriendlyValidationMessage(string $field, string $message)
+    {
+        // File validation messages
+        if ($field === 'file') {
+            if (strpos($message, 'required') !== false) {
+                return 'Please select a file to upload for reconciliation.';
+            }
+            if (strpos($message, 'file') !== false && strpos($message, 'must be a valid file') !== false) {
+                return 'The selected item is not a valid file. Please choose a proper file.';
+            }
+            if (strpos($message, 'mimes') !== false) {
+                return 'Invalid file type. Only CSV, Excel (.xlsx/.xls), and PDF files are accepted.';
+            }
+            if (strpos($message, 'max') !== false) {
+                return 'File is too large. Maximum file size is 5MB.';
+            }
+        }
+
+        // Mode validation messages
+        if ($field === 'mode') {
+            if (strpos($message, 'required') !== false) {
+                return 'Please select a reconciliation mode (by period or by transaction ID).';
+            }
+            if (strpos($message, 'in') !== false) {
+                return 'Invalid reconciliation mode selected.';
+            }
+        }
+
+        // Date validation messages
+        if (in_array($field, ['start_date', 'end_date'])) {
+            if (strpos($message, 'date') !== false) {
+                return ucfirst(str_replace('_', ' ', $field)) . ' must be a valid date.';
+            }
+            if (strpos($message, 'required_if') !== false) {
+                return ucfirst(str_replace('_', ' ', $field)) . ' is required when using period-based reconciliation.';
+            }
+            if (strpos($message, 'after_or_equal') !== false) {
+                return 'End date must be on or after the start date.';
+            }
+        }
+
+        // Return original message if no specific formatting found
+        return ucfirst($message);
+    }
+
+    /**
+     * Convert technical exceptions to user-friendly error messages
+     *
+     * @param \Exception $e
+     * @return string
+     */
+    private function getUserFriendlyErrorMessage(\Exception $e)
+    {
+        $message = $e->getMessage();
+
+        // File upload related errors
+        if (strpos($message, 'No data found in uploaded file') !== false) {
+            return 'The uploaded file appears to be empty or contains no transaction data. Please check the file and try again.';
+        }
+
+        if (strpos($message, 'Unsupported file type') !== false) {
+            return 'Unsupported file format. Please upload a CSV, Excel (.xlsx/.xls), or PDF file.';
+        }
+
+        if (strpos($message, 'Missing required columns') !== false) {
+            return 'The file is missing required columns. Please ensure your file includes Transaction ID, Date, and Amount columns.';
+        }
+
+        if (strpos($message, 'File contains no valid column headers') !== false) {
+            return 'Unable to read column headers from the file. Please check the file format and try again.';
+        }
+
+        if (strpos($message, 'Data validation errors') !== false) {
+            return 'Some data in the file is invalid. Please check that dates are properly formatted and amounts are numeric.';
+        }
+
+        if (strpos($message, 'Could not open CSV file') !== false) {
+            return 'Unable to read the uploaded file. The file may be corrupted or in an unsupported format.';
+        }
+
+        if (strpos($message, 'Failed to parse PDF') !== false) {
+            return 'Unable to extract data from the PDF file. Please ensure it\'s a valid bank statement PDF.';
+        }
+
+        // Database related errors
+        if (strpos($message, 'SQLSTATE[23000]') !== false && strpos($message, 'Duplicate entry') !== false) {
+            return 'The uploaded file contains transaction IDs that already exist in the database. Please ensure all transaction IDs are unique or remove duplicate entries from your file.';
+        }
+        if (strpos($message, 'SQLSTATE') !== false || strpos($message, 'database') !== false) {
+            return 'A database error occurred while processing your request. Please try again in a few moments.';
+        }
+
+        // Processing errors
+        if (strpos($message, 'timeout') !== false || strpos($message, 'timed out') !== false) {
+            return 'The reconciliation process took too long to complete. Please try with a smaller file or contact support.';
+        }
+
+        // Memory/storage errors
+        if (strpos($message, 'Allowed memory size') !== false) {
+            return 'The file is too large to process. Please try with a smaller file (maximum 5MB).';
+        }
+
+        if (strpos($message, 'disk space') !== false || strpos($message, 'storage') !== false) {
+            return 'Insufficient storage space to process the file. Please contact support.';
+        }
+
+        // Generic fallback
+        return 'An unexpected error occurred during reconciliation. Please try again or contact support if the problem persists.';
     }
 }

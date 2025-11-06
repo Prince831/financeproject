@@ -23,7 +23,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE = 'http://127.0.0.1:8002/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002/api';
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -45,29 +45,39 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   // Initialize auth state from localStorage
   useEffect(() => {
+    console.log('AuthProvider: Initializing auth state');
     const storedToken = localStorage.getItem('auth_token');
     const storedUser = localStorage.getItem('auth_user');
 
+    console.log('AuthProvider: Stored token exists:', !!storedToken, 'Stored user exists:', !!storedUser);
+
     if (storedToken && storedUser) {
+      // Set token and user state first
       setToken(storedToken);
       setUser(JSON.parse(storedUser));
-      axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+      console.log('AuthProvider: Auth state restored from localStorage');
+    } else {
+      console.log('AuthProvider: No stored auth data found');
     }
 
     setIsLoading(false);
+    console.log('AuthProvider: Auth initialization complete, isLoading set to false');
   }, []);
 
-  // Set up axios interceptor for token refresh
+  // Set up axios header when token changes
   useEffect(() => {
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      console.log('AuthProvider: Axios header set for token');
     } else {
       delete axios.defaults.headers.common['Authorization'];
+      console.log('AuthProvider: Axios header cleared');
     }
   }, [token]);
 
   const login = async (email: string, password: string) => {
     try {
+      console.log('AuthProvider: Starting login for email:', email);
       setIsLoading(true);
       setError(null);
 
@@ -76,8 +86,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         password
       });
 
+      console.log('AuthProvider: Login API response received');
       const { user: userData, token: authToken } = response.data;
 
+      console.log('AuthProvider: Setting user and token');
       setUser(userData);
       setToken(authToken);
 
@@ -88,12 +100,16 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       // Set axios default header
       axios.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
 
+      console.log('AuthProvider: Login successful, user authenticated');
+
     } catch (err: any) {
+      console.error('AuthProvider: Login failed', err);
       const errorMessage = err.response?.data?.message || 'Login failed';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
       setIsLoading(false);
+      console.log('AuthProvider: Login process complete, isLoading set to false');
     }
   };
 
