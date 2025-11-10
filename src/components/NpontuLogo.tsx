@@ -26,9 +26,9 @@ const NpontuLogo: React.FC<NpontuLogoProps> = ({
   };
 
   const icon = (
-    <div className={`${sizeClasses[size]} bg-gradient-to-br from-blue-600 to-blue-800 rounded-lg flex items-center justify-center shadow-lg ${className}`}>
+    <div className={`${sizeClasses[size]} bg-gradient-to-br from-green-600 to-green-800 rounded-lg flex items-center justify-center shadow-lg ${className}`}>
       <svg viewBox="0 0 24 24" className="w-2/3 h-2/3 text-white" fill="currentColor">
-        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
       </svg>
     </div>
   );
