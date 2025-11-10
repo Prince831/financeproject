@@ -67,7 +67,7 @@ export const useReconciliationManager = () => {
     resetAll: resetReconciliation,
   } = useReconciliation(reconciliationMode, startDate, endDate);
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002/api';
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
   // Fetch transactions and summary on component mount and when filters change
   // Only make API calls when authenticated
@@ -89,6 +89,7 @@ export const useReconciliationManager = () => {
 
   // Update reconciliation results when results change
   useEffect(() => {
+    console.log('useReconciliationManager: Results updated:', results ? 'Results available' : 'No results');
     if (results) {
       setReconciliationResults(results);
     }
@@ -138,6 +139,8 @@ export const useReconciliationManager = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    console.log('useReconciliationManager: Starting file upload for:', file.name);
+
     // For period mode, check dates unless using entire document
     if (reconciliationMode === 'by_period' && !useEntireDocument && (!startDate || !endDate)) {
       setError('Please select both start and end dates before uploading, or check "Use entire document"');
@@ -147,27 +150,63 @@ export const useReconciliationManager = () => {
     try {
       setUploading(true);
       setError(null);
+      setErrorType(undefined);
       setUploadedFileName(file.name);
+
+      console.log('useReconciliationManager: Setting uploaded file in reconciliation hook');
       setUploadedFile(file);
 
+      console.log('useReconciliationManager: Starting reconciliation comparison');
       // Use the enhanced reconciliation hook's startComparison method
       await startComparison();
 
-      // The reconciliation hook will handle progress updates and set results
-      // When complete, update our local state
-      if (results) {
-        setReconciliationResults(results);
-        await fetchTransactions();
-        await fetchSummary();
+      console.log('useReconciliationManager: Reconciliation started, waiting for completion...');
+
+      // Wait for reconciliation to complete by polling the results
+      // This fixes the race condition where results weren't available immediately
+      let attempts = 0;
+      const maxAttempts = 60; // 60 seconds max wait
+
+      while (attempts < maxAttempts) {
+        console.log(`useReconciliationManager: Checking results (attempt ${attempts + 1})`);
+
+        // Check if reconciliation completed successfully
+        if (results && currentStep === 'complete') {
+          console.log('useReconciliationManager: Reconciliation completed successfully');
+          setReconciliationResults(results);
+          await fetchTransactions();
+          await fetchSummary();
+          break;
+        }
+
+        // Check if there was an error
+        if (error && currentStep === 'idle') {
+          console.log('useReconciliationManager: Reconciliation failed with error');
+          // Error is already set by the reconciliation hook
+          break;
+        }
+
+        // Wait 1 second before checking again
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      }
+
+      if (attempts >= maxAttempts) {
+        console.error('useReconciliationManager: Reconciliation timed out');
+        setError('Reconciliation is taking longer than expected. Please try again.');
+        setUploadedFileName(null);
+        setUploadedFile(null);
       }
 
     } catch (err: any) {
-      console.error('Upload error:', err);
+      console.error('useReconciliationManager: Upload error:', err);
       setError('Upload failed. Please check your file and try again.');
+      setErrorType('file_upload_error');
       setUploadedFileName(null);
       setUploadedFile(null);
     } finally {
       setUploading(false);
+      console.log('useReconciliationManager: File upload process complete');
     }
   };
 
