@@ -43,25 +43,45 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize auth state from localStorage
+  // Initialize auth state from localStorage with server validation
   useEffect(() => {
-    console.log('AuthProvider: Initializing auth state');
-    const storedToken = localStorage.getItem('auth_token');
-    const storedUser = localStorage.getItem('auth_user');
+    const validateStoredAuth = async () => {
+      console.log('AuthProvider: Initializing auth state');
+      const storedToken = localStorage.getItem('auth_token');
+      const storedUser = localStorage.getItem('auth_user');
 
-    console.log('AuthProvider: Stored token exists:', !!storedToken, 'Stored user exists:', !!storedUser);
+      console.log('AuthProvider: Stored token exists:', !!storedToken, 'Stored user exists:', !!storedUser);
 
-    if (storedToken && storedUser) {
-      // Set token and user state first
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-      console.log('AuthProvider: Auth state restored from localStorage');
-    } else {
-      console.log('AuthProvider: No stored auth data found');
-    }
+      if (storedToken && storedUser) {
+        try {
+          console.log('AuthProvider: Validating stored token with server');
+          // Set axios header temporarily for validation
+          axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
 
-    setIsLoading(false);
-    console.log('AuthProvider: Auth initialization complete, isLoading set to false');
+          // Validate token by calling user endpoint
+          await axios.get(`${API_BASE}/user`);
+
+          console.log('AuthProvider: Token validated successfully, restoring auth state');
+          // Token is valid, restore authentication state
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+
+        } catch (error) {
+          console.log('AuthProvider: Stored token invalid, clearing stored data');
+          // Token invalid or server error, clear stored data
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('auth_user');
+          delete axios.defaults.headers.common['Authorization'];
+        }
+      } else {
+        console.log('AuthProvider: No stored auth data found');
+      }
+
+      setIsLoading(false);
+      console.log('AuthProvider: Auth initialization complete, isLoading set to false');
+    };
+
+    validateStoredAuth();
   }, []);
 
   // Set up axios header when token changes

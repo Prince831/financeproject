@@ -1,5 +1,5 @@
-import React, { useState, useEffect, Component, ReactNode } from 'react';
-import { LogOut, History, ArrowLeft, AlertCircle, ChevronDown, ChevronUp, FileText } from "lucide-react";
+import { useState, useEffect, Component, ReactNode } from 'react';
+import { LogOut, History, AlertCircle, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { useAuth } from './hooks/useAuth';
 import { useReconciliationManager } from './hooks/useReconciliationManager';
 import AuthPage from './components/AuthPage';

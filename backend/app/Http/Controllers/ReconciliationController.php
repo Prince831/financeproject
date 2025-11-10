@@ -337,6 +337,18 @@ class ReconciliationController extends Controller
                 'all_input' => $request->all()
             ]);
 
+            // Log system state before processing
+            Log::info('System state before reconciliation', [
+                'memory_usage' => memory_get_usage(true),
+                'memory_peak' => memory_get_peak_usage(true),
+                'php_version' => PHP_VERSION,
+                'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'unknown',
+                'max_execution_time' => ini_get('max_execution_time'),
+                'memory_limit' => ini_get('memory_limit'),
+                'upload_max_filesize' => ini_get('upload_max_filesize'),
+                'post_max_size' => ini_get('post_max_size')
+            ]);
+
             // Initialize progress
             $this->updateProgress($sessionId, [
                 'step' => 'initializing',
@@ -419,11 +431,21 @@ class ReconciliationController extends Controller
             ]);
 
             // Parse file based on type
+            Log::info('Starting file parsing', [
+                'file_path' => $fullPath,
+                'extension' => $extension,
+                'file_exists' => file_exists($fullPath),
+                'file_size' => file_exists($fullPath) ? filesize($fullPath) : 'unknown',
+                'file_readable' => file_exists($fullPath) ? is_readable($fullPath) : 'unknown'
+            ]);
+
             $documentData = $this->parseFile($fullPath, $extension);
 
             Log::info('File parsed successfully', [
                 'record_count' => count($documentData),
-                'sample_record' => !empty($documentData) ? array_slice($documentData, 0, 1) : null
+                'sample_record' => !empty($documentData) ? array_slice($documentData, 0, 1) : null,
+                'memory_after_parsing' => memory_get_usage(true),
+                'parsing_time' => round(microtime(true) - $startTime, 2) . ' seconds'
             ]);
 
             // Update progress: Parsing complete
@@ -468,7 +490,26 @@ class ReconciliationController extends Controller
             ]);
 
             // Perform reconciliation against database
+            Log::info('Starting reconciliation processing', [
+                'document_records_count' => count($documentData),
+                'mode' => $mode,
+                'start_date' => $request->input('start_date'),
+                'end_date' => $request->input('end_date'),
+                'memory_before_reconciliation' => memory_get_usage(true)
+            ]);
+
             $result = $this->performReconciliation($documentData, $mode, $request->input('start_date'), $request->input('end_date'));
+
+            Log::info('Reconciliation processing completed', [
+                'result_summary' => [
+                    'total_records' => $result['totalRecords'] ?? 0,
+                    'matched' => $result['matched'] ?? 0,
+                    'discrepancies' => $result['discrepancies'] ?? 0,
+                    'net_variance' => $result['netVariance'] ?? 0
+                ],
+                'processing_time' => round(microtime(true) - $startTime, 2) . ' seconds',
+                'memory_after_reconciliation' => memory_get_usage(true)
+            ]);
 
             // Update progress: Reconciliation processing
             $this->updateProgress($sessionId, [
@@ -486,6 +527,30 @@ class ReconciliationController extends Controller
             // Save reconciliation report to database
             $reference = 'REC-' . now()->format('Ymd-His') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
 
+            // Optimize data storage to prevent packet size issues
+            $discrepancyDetails = $result['records'] ?? [];
+            $detailedRecords = $result['detailedRecords'] ?? [];
+
+            // Limit stored data size to prevent database packet issues
+            $maxDiscrepancies = 100; // Limit to first 100 discrepancies
+            if (count($discrepancyDetails) > $maxDiscrepancies) {
+                $discrepancyDetails = array_slice($discrepancyDetails, 0, $maxDiscrepancies);
+                Log::info('Truncated discrepancy details for database storage', [
+                    'original_count' => count($result['records']),
+                    'stored_count' => $maxDiscrepancies
+                ]);
+            }
+
+            // For detailed records, only store summary information
+            $optimizedDetailedRecords = [];
+            foreach (($result['detailedRecords'] ?? []) as $record) {
+                $optimizedDetailedRecords[] = [
+                    'transaction_id' => $record['transaction_id'] ?? null,
+                    'has_discrepancies' => !empty($record['discrepancies']),
+                    'discrepancy_count' => count($record['discrepancies'] ?? [])
+                ];
+            }
+
             ReconciliationReport::create([
                 'reference' => $reference,
                 'reconciliation_date' => now(),
@@ -498,9 +563,10 @@ class ReconciliationController extends Controller
                 'total_records' => $result['totalRecords'],
                 'matched_records' => $result['matched'],
                 'discrepancies' => $result['discrepancies'],
-                'discrepancy_details' => $result['records'],
-                'detailed_records' => $result['detailedRecords'], // Store complete record details
+                'discrepancy_details' => $discrepancyDetails, // Limited discrepancy details
+                'detailed_records' => $optimizedDetailedRecords, // Optimized detailed records
                 'status' => 'completed',
+                'unrecognized_count' => $result['unrecognizedCount'] ?? 0, // Add unrecognized count
             ]);
 
             // Add reference to result
@@ -543,7 +609,18 @@ class ReconciliationController extends Controller
                 'file' => $request->hasFile('file') ? $request->file('file')->getClientOriginalName() : 'Unknown',
                 'trace' => $e->getTraceAsString(),
                 'line' => $e->getLine(),
-                'file_path' => $e->getFile()
+                'file_path' => $e->getFile(),
+                'session_id' => $sessionId,
+                'processing_time' => round(microtime(true) - $startTime, 2) . ' seconds',
+                'memory_usage' => memory_get_usage(true),
+                'memory_peak' => memory_get_peak_usage(true),
+                'request_data' => [
+                    'mode' => $request->input('mode'),
+                    'start_date' => $request->input('start_date'),
+                    'end_date' => $request->input('end_date'),
+                    'has_file' => $request->hasFile('file'),
+                    'file_size' => $request->hasFile('file') ? $request->file('file')->getSize() : null
+                ]
             ]);
 
             $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
@@ -554,7 +631,9 @@ class ReconciliationController extends Controller
                 'error_details' => [
                     'type' => get_class($e),
                     'line' => $e->getLine(),
-                    'file' => basename($e->getFile())
+                    'file' => basename($e->getFile()),
+                    'session_id' => $sessionId,
+                    'processing_time' => round(microtime(true) - $startTime, 2) . ' seconds'
                 ]
             ], 500);
         }
@@ -620,7 +699,7 @@ class ReconciliationController extends Controller
         }
 
         if (!empty($missingColumns)) {
-            throw new \Exception('Missing required columns: ' . implode('; ', $missingColumns));
+            throw new \Exception('Missing required columns: ' . implode('; ', $missingColumns) . '. Please ensure your file includes Transaction ID, Date, and Amount columns.');
         }
 
         // Validate data structure for first few rows (sample validation)
@@ -985,6 +1064,14 @@ class ReconciliationController extends Controller
 
     private function performReconciliation($documentData, $mode = 'by_transaction_id', $startDate = null, $endDate = null)
     {
+        Log::info('Starting performReconciliation', [
+            'document_records_count' => count($documentData),
+            'mode' => $mode,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'memory_usage' => memory_get_usage(true)
+        ]);
+
         $totalRecords = count($documentData);
         $matched = 0;
         $discrepancies = 0;
@@ -998,11 +1085,47 @@ class ReconciliationController extends Controller
         $totalCreditVariance = 0;
         $records = [];
         $detailedRecords = []; // Store complete record details for reporting
+        $unrecognizedIds = []; // Track IDs not found in database
 
-        // Always get all records first, then filter by period if needed during matching
+        // Extract transaction IDs from uploaded file
+        $documentIds = [];
+        foreach ($documentData as $docRecord) {
+            $recordId = $docRecord['transaction_id'] ?? $docRecord['id'] ?? $docRecord['Transaction ID'] ?? $docRecord['Txn ID'] ?? $docRecord['Transaction Id'] ?? null;
+            if ($recordId) {
+                $documentIds[] = $recordId;
+            }
+        }
+
+        $uniqueDocumentIds = array_unique($documentIds);
+
+        Log::info('Extracted transaction IDs from uploaded file', [
+            'total_document_records' => count($documentData),
+            'extracted_ids_count' => count($documentIds),
+            'unique_ids_count' => count($uniqueDocumentIds),
+            'sample_ids' => array_slice($uniqueDocumentIds, 0, 5)
+        ]);
+
+        // Fetch only database records that match the uploaded file's transaction IDs
         $dbRecords = \App\Models\Transaction::select(['transaction_id', 'account_number', 'account_name', 'description', 'reference_number', 'debit_amount', 'credit_amount', 'balance', 'transaction_type', 'status', 'transaction_date'])
+            ->whereIn('transaction_id', $uniqueDocumentIds)
             ->get()
             ->keyBy('transaction_id');
+
+        // Identify unrecognized IDs (IDs in upload but not found in database)
+        $foundIds = $dbRecords->keys()->toArray();
+        $unrecognizedIds = array_diff($uniqueDocumentIds, $foundIds);
+
+        Log::info('Database lookup results', [
+            'uploaded_unique_ids' => count($uniqueDocumentIds),
+            'found_in_database' => count($foundIds),
+            'unrecognized_ids' => count($unrecognizedIds),
+            'sample_unrecognized' => array_slice($unrecognizedIds, 0, 5)
+        ]);
+
+        Log::info('Database records fetched', [
+            'db_records_count' => $dbRecords->count(),
+            'sample_db_record' => $dbRecords->isNotEmpty() ? $dbRecords->first()->toArray() : null
+        ]);
 
         foreach ($documentData as $docRecord) {
             // Always identify records by transaction_id first (case-insensitive matching)
@@ -1233,7 +1356,10 @@ class ReconciliationController extends Controller
         $netVariance = $totalDebitVariance + $totalCreditVariance;
         $balanceStatus = abs($netVariance) < 0.01 ? 'In Balance' : 'Out of Balance';
 
-        return [
+        // Add unrecognized IDs count to the result
+        $unrecognizedCount = count($unrecognizedIds);
+
+        $result = [
             'totalRecords' => $totalRecords,
             'matched' => $matched,
             'discrepancies' => $discrepancies,
@@ -1248,8 +1374,24 @@ class ReconciliationController extends Controller
             'netVariance' => $netVariance,
             'balanceStatus' => $balanceStatus,
             'records' => $records,
-            'detailedRecords' => $detailedRecords // Include complete record details
+            'detailedRecords' => $detailedRecords, // Include complete record details
+            'unrecognizedIds' => $unrecognizedIds, // List of IDs not found in database
+            'unrecognizedCount' => $unrecognizedCount // Count of unrecognized IDs
         ];
+
+        Log::info('performReconciliation completed', [
+            'result_summary' => [
+                'total_records' => $totalRecords,
+                'matched' => $matched,
+                'discrepancies' => $discrepancies,
+                'net_variance' => $netVariance,
+                'balance_status' => $balanceStatus,
+                'unrecognized_count' => $unrecognizedCount
+            ],
+            'memory_usage' => memory_get_usage(true)
+        ]);
+
+        return $result;
     }
 
     /**

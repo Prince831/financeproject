@@ -24,6 +24,7 @@ class ReconciliationReport extends Model
         'discrepancy_details',
         'detailed_records',
         'status',
+        'unrecognized_count',
     ];
 
     protected $casts = [
@@ -35,5 +36,6 @@ class ReconciliationReport extends Model
         'net_change' => 'decimal:2',
         'discrepancy_details' => 'array',
         'detailed_records' => 'array',
+        'unrecognized_count' => 'integer',
     ];
 }

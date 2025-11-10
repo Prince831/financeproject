@@ -59,7 +59,7 @@ class ReconciliationTest extends TestCase
         // Should return 500 with validation error
         $response->assertStatus(500);
         $response->assertJsonFragment([
-            'message' => 'Reconciliation failed: Missing required columns: Transaction id (possible names: transaction_id, id, transaction id, txn id, transactionid); Date (possible names: date, transaction_date, transaction date, txn_date, txndate); Amount (possible names: amount, debit_amount, credit_amount, debit amount, credit amount, amt)'
+            'message' => 'The file is missing required columns. Please ensure your file includes Transaction ID, Date, and Amount columns.'
         ]);
     }
 
@@ -100,7 +100,7 @@ class ReconciliationTest extends TestCase
         // Should return validation error for invalid date
         $response->assertStatus(500);
         $response->assertJsonFragment([
-            'message' => 'Reconciliation failed: Data validation errors: Row 1: Invalid date format \'invalid-date\''
+            'message' => 'Some data in the file is invalid. Please check that dates are properly formatted and amounts are numeric.'
         ]);
     }
 
