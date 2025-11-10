@@ -207,12 +207,12 @@ function App() {
             <div className="flex items-center space-x-3 sm:space-x-6">
               <img
                 src="/images/npontu-logo.png"
-                alt="Npontu Technologies Logo"
+                alt="Kowri Recon Logo"
                 className="h-10 sm:h-12 w-auto"
               />
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 font-display">Npontu Technologies</h1>
-                <p className="text-gray-600 text-xs sm:text-sm">Financial Technology Solutions</p>
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 font-display">Kowri Recon</h1>
+                <p className="text-gray-600 text-xs sm:text-sm">Financial Reconciliation System</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">

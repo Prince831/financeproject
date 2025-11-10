@@ -35,12 +35,12 @@ const NpontuLogo: React.FC<NpontuLogoProps> = ({
 
   const text = (
     <span className={`${textSizeClasses[size]} font-display font-bold bg-gradient-to-r from-npontu-600 to-npontu-800 bg-clip-text text-transparent`}>
-      Npontu Technologies
+      Kowri Recon
     </span>
   );
 
   const subtitle = (
-    <p className="text-npontu-100 text-sm mt-1">Financial Technology Solutions</p>
+    <p className="text-npontu-100 text-sm mt-1">Financial Reconciliation System</p>
   );
 
   if (variant === 'icon') {
