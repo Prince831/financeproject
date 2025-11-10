@@ -57,7 +57,6 @@ export const useReconciliationManager = () => {
 
   // Use the enhanced reconciliation hook
   const {
-    uploadedFile,
     setUploadedFile,
     currentStep,
     progress,
@@ -280,7 +279,7 @@ export const useReconciliationManager = () => {
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
 
-      const response = await axios.get(`${API_BASE}/generate-statement?${params}`);
+      await axios.get(`${API_BASE}/generate-statement?${params}`);
       alert('Statement generated successfully! Use the filters to view the filtered data.');
       await fetchTransactions();
       await fetchSummary();

@@ -96,7 +96,7 @@ class ReconciliationController extends Controller
             // Add metadata
             $result['comparisonTime'] = round(microtime(true) - $startTime, 2) . ' seconds';
             $result['timestamp'] = now()->toISOString();
-            $result['user'] = $request->user()->name;
+            $result['user'] = $request->user() ? $request->user()->name : 'Anonymous User';
 
             // Save reconciliation report to database
             $reference = 'MANUAL-' . now()->format('Ymd-His') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
@@ -522,7 +522,7 @@ class ReconciliationController extends Controller
             // Add metadata
             $result['comparisonTime'] = round(microtime(true) - $startTime, 2) . ' seconds';
             $result['timestamp'] = now()->toISOString();
-            $result['user'] = $request->user()->name;
+            $result['user'] = $request->user() ? $request->user()->name : 'Anonymous User';
 
             // Save reconciliation report to database
             $reference = 'REC-' . now()->format('Ymd-His') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));

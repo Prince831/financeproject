@@ -71,6 +71,7 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
   const [progress, setProgress] = useState(() => getInitialState('progress', 0));
   const [progressStatus, setProgressStatus] = useState<ProgressStatus | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // sessionId is used for progress polling and API communication
   const [results, setResults] = useState<FileResult | null>(() => getInitialState('results', null));
   const [error, setError] = useState<string | null>(() => getInitialState('error', null));
   const [errorType, setErrorType] = useState<string | undefined>(() => getInitialState('errorType', undefined));
@@ -194,7 +195,7 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
 
     try {
       // Start the reconciliation process
-      const res = await axios.post(`${API_BASE}/reconcile`, formData, {
+      await axios.post(`${API_BASE}/reconcile`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 60000, // 1 minute timeout for faster feedback
         onUploadProgress: (progressEvent) => {
