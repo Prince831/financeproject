@@ -165,10 +165,12 @@ export const useReconciliationManager = () => {
       // Wait for reconciliation to complete by polling the results
       // This fixes the race condition where results weren't available immediately
       let attempts = 0;
-      const maxAttempts = 60; // 60 seconds max wait
+      const maxAttempts = 30; // Reduced to 30 seconds for faster feedback
+
+      console.log('useReconciliationManager: Starting completion polling...');
 
       while (attempts < maxAttempts) {
-        console.log(`useReconciliationManager: Checking results (attempt ${attempts + 1})`);
+        console.log(`useReconciliationManager: Checking results (attempt ${attempts + 1}/${maxAttempts})`);
 
         // Check if reconciliation completed successfully
         if (results && currentStep === 'complete') {
@@ -186,16 +188,18 @@ export const useReconciliationManager = () => {
           break;
         }
 
-        // Wait 1 second before checking again
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Wait 500ms before checking again (faster polling)
+        await new Promise(resolve => setTimeout(resolve, 500));
         attempts++;
       }
 
       if (attempts >= maxAttempts) {
-        console.error('useReconciliationManager: Reconciliation timed out');
+        console.error('useReconciliationManager: Reconciliation timed out after', maxAttempts, 'seconds');
         setError('Reconciliation is taking longer than expected. Please try again.');
         setUploadedFileName(null);
         setUploadedFile(null);
+      } else {
+        console.log('useReconciliationManager: Reconciliation completed in', attempts * 0.5, 'seconds');
       }
 
     } catch (err: any) {

@@ -196,7 +196,7 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
       // Start the reconciliation process
       const res = await axios.post(`${API_BASE}/reconcile`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 300000, // 5 minutes timeout for large files
+        timeout: 60000, // 1 minute timeout for faster feedback
         onUploadProgress: (progressEvent) => {
           const percent = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
           setProgress(percent * 0.1); // Upload is 10% of total progress
@@ -217,15 +217,16 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
         }
       }, 1000); // Poll every second
 
-      // Set a timeout to stop polling after 5 minutes
+      // Set a timeout to stop polling after 30 seconds (reduced for faster feedback)
       setTimeout(() => {
         clearInterval(pollInterval);
         if (currentStep === 'processing') {
-          setError('Reconciliation is taking longer than expected. Please check back later.');
+          console.error('useReconciliation: Reconciliation timed out after 30 seconds');
+          setError('Reconciliation is taking longer than expected. Please try again.');
           setCurrentStep('idle');
           setProgress(0);
         }
-      }, 300000);
+      }, 30000); // 30 seconds instead of 5 minutes
 
     } catch (err: any) {
       console.error('Reconciliation error:', err);
