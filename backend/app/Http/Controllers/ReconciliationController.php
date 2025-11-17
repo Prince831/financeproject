@@ -644,8 +644,11 @@ class ReconciliationController extends Controller
 
         // Define required columns (case-insensitive variations)
         $requiredColumns = [
-            'transaction_id' => ['transaction_id', 'id', 'transaction id', 'txn id', 'transactionid'],
-            'date' => ['date', 'transaction_date', 'transaction date', 'txn_date', 'txndate'],
+            'transaction_id' => [
+                'transaction_id', 'id', 'transaction id', 'txn id', 'transactionid',
+                'transaction id/reference', 'transaction id / reference', 'transaction_id/reference'
+            ],
+            'date' => ['date', 'transaction_date', 'transaction date', 'txn_date', 'txndate', 'date and time'],
             'amount' => ['amount', 'debit_amount', 'credit_amount', 'debit amount', 'credit amount', 'amt']
         ];
 
@@ -679,10 +682,27 @@ class ReconciliationController extends Controller
 
             // Validate Transaction ID (but don't fail - we'll handle missing IDs in processing)
             $transactionId = null;
-            foreach (['transaction_id', 'id', 'Transaction ID', 'Txn ID', 'Transaction Id'] as $key) {
+            $transactionIdKeys = [
+                'transaction_id', 'id', 'Transaction ID', 'Txn ID', 'Transaction Id',
+                'Transaction ID/Reference', 'Transaction ID / Reference', 'transaction id/reference'
+            ];
+            
+            // Try exact matches first
+            foreach ($transactionIdKeys as $key) {
                 if (isset($row[$key])) {
                     $transactionId = $row[$key];
                     break;
+                }
+            }
+            
+            // If no exact match, try case-insensitive search
+            if (empty($transactionId)) {
+                foreach ($row as $key => $value) {
+                    $normalizedKey = strtolower(str_replace(['/', '_', ' '], '', $key));
+                    if (in_array($normalizedKey, ['transactionid', 'transactionidreference', 'txnid', 'id']) && !empty($value)) {
+                        $transactionId = $value;
+                        break;
+                    }
                 }
             }
 
@@ -1705,6 +1725,7 @@ class ReconciliationController extends Controller
 
     private function extractTransactionIdFromArray(array $record): ?string
     {
+        // First, try exact key matches
         $candidates = [
             'transaction_id',
             'id',
@@ -1712,12 +1733,32 @@ class ReconciliationController extends Controller
             'Txn ID',
             'Transaction Id',
             'reference',
-            'reference_number'
+            'reference_number',
+            'Transaction ID/Reference',
+            'Transaction ID / Reference',
+            'transaction id/reference'
         ];
 
         foreach ($candidates as $candidate) {
             if (isset($record[$candidate]) && trim((string)$record[$candidate]) !== '') {
                 return trim((string)$record[$candidate]);
+            }
+        }
+
+        // If exact match fails, try case-insensitive key matching
+        foreach ($record as $key => $value) {
+            $normalizedKey = strtolower(str_replace(['/', '_', ' '], '', $key));
+            $possibleMatches = [
+                'transactionid',
+                'transactionidreference',
+                'txnid',
+                'id',
+                'reference',
+                'referencenumber'
+            ];
+            
+            if (in_array($normalizedKey, $possibleMatches) && trim((string)$value) !== '') {
+                return trim((string)$value);
             }
         }
 
@@ -2076,12 +2117,42 @@ class ReconciliationController extends Controller
     public function getReports(Request $request)
     {
         try {
+            // Get all reports from database - fetch all fields directly from database
+            $perPage = $request->input('per_page', 100); // Default 100, can be increased
+            $perPage = min((int) $perPage, 500); // Max 500 for performance
+            
+            // Fetch all fields from reconciliation_runs table - no field restrictions
             $reports = ReconciliationRun::orderBy('reconciliation_date', 'desc')
-                ->paginate(20);
+                ->paginate($perPage);
+
+            // Ensure payload and summary are properly decoded from JSON
+            $reports->getCollection()->transform(function ($report) {
+                // The casts should handle this automatically, but ensure it's an array
+                if (is_string($report->payload)) {
+                    $report->payload = json_decode($report->payload, true);
+                }
+                if (is_string($report->summary)) {
+                    $report->summary = json_decode($report->summary, true);
+                }
+                if (is_string($report->filters)) {
+                    $report->filters = json_decode($report->filters, true);
+                }
+                return $report;
+            });
+
+            Log::info('Fetched reconciliation reports from database', [
+                'total' => $reports->total(),
+                'per_page' => $reports->perPage(),
+                'current_page' => $reports->currentPage(),
+                'returned_count' => $reports->count()
+            ]);
 
             return response()->json($reports);
         } catch (\Exception $e) {
-            Log::error('Failed to fetch reports', ['error' => $e->getMessage()]);
+            Log::error('Failed to fetch reports', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
             return response()->json([
                 'message' => $userFriendlyMessage,

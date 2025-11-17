@@ -94,8 +94,18 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
   const getInitialState = (key: string, defaultValue: any) => {
     try {
       const item = localStorage.getItem(`auditSync_${key}`);
-      return item ? JSON.parse(item) : defaultValue;
-    } catch {
+      if (!item) return defaultValue;
+      
+      // Special handling for uploadedFile - we only store metadata, not the actual File
+      if (key === 'uploadedFile') {
+        // Return null since we can't recreate a File object from localStorage
+        return null;
+      }
+      
+      const parsed = JSON.parse(item);
+      return parsed;
+    } catch (error) {
+      // Silently fail and return default - don't log errors on every render
       return defaultValue;
     }
   };
@@ -114,27 +124,72 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
 
   // Save state to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('auditSync_uploadedFile', JSON.stringify(uploadedFile));
+    try {
+      // File objects cannot be stringified, so only save metadata
+      if (uploadedFile) {
+        const fileMetadata = {
+          name: uploadedFile.name,
+          size: uploadedFile.size,
+          type: uploadedFile.type,
+          lastModified: uploadedFile.lastModified,
+        };
+        localStorage.setItem('auditSync_uploadedFile', JSON.stringify(fileMetadata));
+      } else {
+        localStorage.removeItem('auditSync_uploadedFile');
+      }
+    } catch {
+      // Silently fail - localStorage might be disabled or full
+    }
   }, [uploadedFile]);
 
   useEffect(() => {
-    localStorage.setItem('auditSync_currentStep', JSON.stringify(currentStep));
+    try {
+      localStorage.setItem('auditSync_currentStep', JSON.stringify(currentStep));
+    } catch {
+      // Silently fail - localStorage might be disabled or full
+    }
   }, [currentStep]);
 
   useEffect(() => {
-    localStorage.setItem('auditSync_progress', JSON.stringify(progress));
+    try {
+      localStorage.setItem('auditSync_progress', JSON.stringify(progress));
+    } catch {
+      // Silently fail - localStorage might be disabled or full
+    }
   }, [progress]);
 
   useEffect(() => {
-    localStorage.setItem('auditSync_results', JSON.stringify(results));
+    try {
+      if (results) {
+        localStorage.setItem('auditSync_results', JSON.stringify(results));
+      } else {
+        localStorage.removeItem('auditSync_results');
+      }
+    } catch {
+      // Silently fail - localStorage might be disabled, full, or results might be too large
+      // Try to remove the item if it exists
+      try {
+        localStorage.removeItem('auditSync_results');
+      } catch {
+        // Ignore errors when removing
+      }
+    }
   }, [results]);
 
   useEffect(() => {
-    localStorage.setItem('auditSync_error', JSON.stringify(error));
+    try {
+      localStorage.setItem('auditSync_error', JSON.stringify(error));
+    } catch {
+      // Silently fail - localStorage might be disabled or full
+    }
   }, [error]);
 
   useEffect(() => {
-    localStorage.setItem('auditSync_errorType', JSON.stringify(errorType));
+    try {
+      localStorage.setItem('auditSync_errorType', JSON.stringify(errorType));
+    } catch {
+      // Silently fail - localStorage might be disabled or full
+    }
   }, [errorType]);
 
   const resetAll = () => {
@@ -207,19 +262,42 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
     setErrorType(undefined);
   }, []);
 
-  const startComparison = async () => {
+  const startComparison = async (fileOverride?: File) => {
+    // Use fileOverride if provided, otherwise use uploadedFile from state
+    const fileToUse = fileOverride || uploadedFile;
+    
+    console.log('useReconciliation: startComparison called', {
+      isAuthenticated,
+      hasToken: !!token,
+      hasFile: !!fileToUse,
+      hasFileOverride: !!fileOverride,
+      hasUploadedFile: !!uploadedFile,
+      reconciliationMode,
+      startDate,
+      endDate
+    });
+
     if (!isAuthenticated || !token) {
+      console.error('useReconciliation: Not authenticated');
       setError('Authentication required. Please log in again.');
       return;
     }
 
-    if (!uploadedFile) return setError('Please upload a file first.');
+    if (!fileToUse) {
+      console.error('useReconciliation: No file provided');
+      setError('Please upload a file first.');
+      return;
+    }
+    
     if (reconciliationMode === 'by_period' && (!startDate || !endDate)) {
-      return setError('Please select both start and end dates for period-based reconciliation.');
+      console.error('useReconciliation: Missing dates for period mode');
+      setError('Please select both start and end dates for period-based reconciliation.');
+      return;
     }
 
     // Generate unique session ID for this reconciliation
     const newSessionId = `rec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log('useReconciliation: Generated session ID', newSessionId);
     setSessionId(newSessionId);
     setCurrentStep('processing');
     setProgress(0);
@@ -233,7 +311,7 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
     setErrorType(undefined);
 
     const formData = new FormData();
-    formData.append('file', uploadedFile);
+    formData.append('file', fileToUse);
     formData.append('mode', reconciliationMode);
     formData.append('session_id', newSessionId);
     if (reconciliationMode === 'by_period') {
@@ -242,13 +320,20 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
     }
 
     try {
+      console.log('useReconciliation: Starting API call to /reconcile', {
+        file: fileToUse.name,
+        fileSize: fileToUse.size,
+        mode: reconciliationMode,
+        sessionId: newSessionId
+      });
+
       // Start the reconciliation process
-      await axios.post(`${API_BASE}/reconcile`, formData, {
+      const response = await axios.post(`${API_BASE}/reconcile`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        timeout: 60000, // 1 minute timeout for faster feedback
+        timeout: 300000, // 5 minutes timeout for large files
         onUploadProgress: (progressEvent) => {
           const percent = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
           setProgress(percent * 0.1); // Upload is 10% of total progress
@@ -261,24 +346,101 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
         }
       });
 
-      // Start polling for progress updates
-      const pollInterval = setInterval(async () => {
-        const progressData = await pollProgress(newSessionId);
-        if (progressData && (progressData.completed || progressData.error)) {
-          clearInterval(pollInterval);
+      console.log('useReconciliation: API response received', {
+        status: response.status,
+        hasData: !!response.data,
+        dataKeys: response.data ? Object.keys(response.data) : [],
+        totalRecords: response.data?.totalRecords,
+        hasResult: response.data?.totalRecords !== undefined
+      });
+
+      // Check if response contains result (synchronous completion)
+      if (response.data && response.data.totalRecords !== undefined) {
+        console.log('useReconciliation: Reconciliation completed synchronously', {
+          totalRecords: response.data.totalRecords,
+          matched: response.data.matched,
+          discrepancies: response.data.discrepancies,
+          fileRecords: response.data.fileRecords,
+          docOnlyCount: response.data.docOnlyCount,
+          dbOnlyCount: response.data.dbOnlyCount
+        });
+        setResults(response.data);
+        setCurrentStep('complete');
+        setProgress(100);
+        setProgressStatus({
+          step: 'complete',
+          progress: 100,
+          message: 'Reconciliation completed successfully!',
+          completed: true,
+          result: response.data
+        });
+        console.log('useReconciliation: Results set, step set to complete');
+        return; // Exit early if we got the result directly
+      }
+
+      console.log('useReconciliation: No direct result, starting polling');
+
+      // If no direct result, start polling for progress updates
+      let pollInterval: NodeJS.Timeout | null = null;
+      let pollTimeout: NodeJS.Timeout | null = null;
+      let pollCount = 0;
+      const maxPolls = 300; // 5 minutes max (300 seconds * 1 second intervals)
+      
+      pollInterval = setInterval(async () => {
+        try {
+          pollCount++;
+          const progressData = await pollProgress(newSessionId);
+          if (progressData) {
+            console.log('useReconciliation: Progress update received', {
+              step: progressData.step,
+              progress: progressData.progress,
+              completed: progressData.completed,
+              error: progressData.error,
+              pollCount
+            });
+            
+            if (progressData.completed) {
+              console.log('useReconciliation: Reconciliation completed via polling');
+              if (pollInterval) clearInterval(pollInterval);
+              if (pollTimeout) clearTimeout(pollTimeout);
+              return;
+            }
+            
+            if (progressData.error) {
+              console.error('useReconciliation: Reconciliation error via polling', progressData);
+              setError(progressData.message || 'Reconciliation failed');
+              setCurrentStep('idle');
+              setProgress(0);
+              if (pollInterval) clearInterval(pollInterval);
+              if (pollTimeout) clearTimeout(pollTimeout);
+              return;
+            }
+          }
+          
+          // Safety check: stop polling after max attempts
+          if (pollCount >= maxPolls) {
+            console.warn('useReconciliation: Max polling attempts reached');
+            if (pollInterval) clearInterval(pollInterval);
+            if (pollTimeout) clearTimeout(pollTimeout);
+            setError('Reconciliation is taking longer than expected. Please check the history for results.');
+            setCurrentStep('idle');
+          }
+        } catch (err) {
+          console.error('useReconciliation: Error during polling', err);
+          // Don't stop polling on individual errors, but log them
         }
       }, 1000); // Poll every second
 
-      // Set a timeout to stop polling after 30 seconds (reduced for faster feedback)
-      setTimeout(() => {
-        clearInterval(pollInterval);
+      // Set a timeout to stop polling after 5 minutes (safety net)
+      pollTimeout = setTimeout(() => {
+        if (pollInterval) clearInterval(pollInterval);
         if (currentStep === 'processing') {
-          console.error('useReconciliation: Reconciliation timed out after 30 seconds');
-          setError('Reconciliation is taking longer than expected. Please try again.');
+          console.error('useReconciliation: Reconciliation timed out after 5 minutes');
+          setError('Reconciliation is taking longer than expected. The process may still be running in the background. Please check the history for results.');
           setCurrentStep('idle');
           setProgress(0);
         }
-      }, 30000); // 30 seconds instead of 5 minutes
+      }, 300000); // 5 minutes for large file processing
 
     } catch (err: any) {
       console.error('Reconciliation error:', err);

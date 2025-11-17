@@ -1,4 +1,4 @@
-import { useState, useEffect, Component, ReactNode } from 'react';
+import { useState, useEffect, useMemo, Component, ReactNode } from 'react';
 import { LogOut, AlertCircle, ChevronDown, ChevronUp, FileText, Clock, X } from "lucide-react";
 import { useAuth } from './hooks/useAuth';
 import { useReconciliationManager } from './hooks/useReconciliationManager';
@@ -144,6 +144,25 @@ function App() {
     };
   }, []);
 
+  // Safely calculate discrepancy count - MUST be called before conditional returns
+  const unmatchedRecords = useMemo(() => {
+    try {
+      if (!reconciliationResults?.records || !Array.isArray(reconciliationResults.records)) {
+        return [];
+      }
+      return reconciliationResults.records.filter(
+        (record: TransactionComparison) =>
+          record?.source === 'document' ||
+          record?.status?.toLowerCase()?.includes('missing in database')
+      );
+    } catch (error) {
+      console.error('App: Error filtering unmatched records', error);
+      return [];
+    }
+  }, [reconciliationResults?.records]);
+  
+  const discrepancyCount = unmatchedRecords.length;
+
   // Show auth page if not authenticated
   if (!isAuthenticated && !authLoading) {
     console.log('App: Showing AuthPage - not authenticated and not loading');
@@ -163,23 +182,22 @@ function App() {
     );
   }
 
-
   console.log('App: User authenticated, rendering main app');
-
-  const unmatchedRecords =
-    (reconciliationResults?.records ?? []).filter(
-      (record: TransactionComparison) =>
-        record.source === 'document' ||
-        record.status?.toLowerCase().includes('missing in database')
-    );
-  const discrepancyCount = unmatchedRecords.length;
 
   return (
     <ErrorBoundary>
       <div className="w-full min-h-screen relative overflow-hidden">
+      {/* Background Image - Same as login page */}
+      <div
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat filter blur-sm"
+        style={{
+          backgroundImage: `url('/images/npontu-logo.png')`,
+        }}
+      />
+      <div className="absolute inset-0 bg-white bg-opacity-90" />
 
       {/* Npontu Technologies Header */}
-      <div className="relative bg-white bg-opacity-95 backdrop-blur-sm border-b border-gray-200 shadow-sm">
+      <div className="relative bg-white bg-opacity-95 backdrop-blur-sm border-b border-gray-200 shadow-sm z-10">
         <div className="absolute inset-0 bg-black/10"></div>
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 lg:py-8">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -223,7 +241,7 @@ function App() {
         </div>
       </div>
 
-      <div className="relative w-full max-w-7xl mx-auto p-6 space-y-8">
+      <div className="relative w-full max-w-7xl mx-auto p-6 space-y-8 z-10">
         {error && errorType === 'reconciliation_processing_error' && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <div className="flex items-center">
@@ -242,10 +260,10 @@ function App() {
           </div>
         )}
 
-        <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden">
-          <div className="bg-gradient-to-r from-npontu-600 to-npontu-800 p-6 text-white">
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-6 text-white">
             <h3 className="text-2xl font-semibold font-display">Advanced Reconciliation Workspace</h3>
-            <p className="text-sm text-white/80">
+            <p className="text-sm text-white/90">
               Configure filters, upload supporting documents, and run by-transaction comparisons in one view.
             </p>
           </div>
@@ -366,23 +384,20 @@ function App() {
       </div>
       {showHistory && (
         <div className="fixed inset-0 z-50 pointer-events-none">
-          <div className="absolute inset-0" onClick={() => setShowHistory(false)} />
+          <div className="absolute inset-0 bg-black/20" onClick={() => setShowHistory(false)} />
           <div
-            className="pointer-events-auto absolute top-8 right-10 w-[min(90vw,560px)] bg-white border border-slate-200 rounded-3xl shadow-[0_20px_60px_rgba(15,23,42,0.25)]"
+            className="pointer-events-auto absolute top-8 right-10 w-[min(90vw,560px)] bg-white border border-gray-200 rounded-2xl shadow-xl"
           >
-            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">History</p>
-                <h3 className="text-lg font-semibold text-slate-900">Reconciliation Reports</h3>
-              </div>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-white">
+              <h3 className="text-lg font-semibold text-gray-900">Reconciliation History</h3>
               <button
                 onClick={() => setShowHistory(false)}
-                className="text-slate-500 hover:text-slate-800 transition-colors"
+                className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="max-h-[78vh] overflow-y-auto">
+            <div className="max-h-[75vh] overflow-y-auto">
               <ReconciliationHistoryPanel />
             </div>
           </div>

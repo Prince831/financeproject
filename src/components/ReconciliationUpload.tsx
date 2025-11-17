@@ -58,7 +58,7 @@ export default function ReconciliationUpload({
             Reset
           </button>
         )}
-        <label className="w-full sm:w-auto bg-gradient-accent text-white py-3 px-6 rounded-xl hover:shadow-floating focus:outline-none focus:ring-2 focus:ring-professional-blue-500 focus:ring-offset-2 transition-all duration-300 font-semibold font-display flex items-center justify-center cursor-pointer hover:scale-[1.02]">
+        <label htmlFor="reconciliation-file-upload" className="w-full sm:w-auto bg-gradient-accent text-white py-3 px-6 rounded-xl hover:shadow-floating focus:outline-none focus:ring-2 focus:ring-professional-blue-500 focus:ring-offset-2 transition-all duration-300 font-semibold font-display flex items-center justify-center cursor-pointer hover:scale-[1.02]">
           {uploading ? (
             <>
               <Loader2 className="w-5 h-5 mr-2 animate-spin" />
@@ -72,10 +72,13 @@ export default function ReconciliationUpload({
           )}
           <input
             type="file"
+            id="reconciliation-file-upload"
+            name="reconciliationFile"
             className="hidden"
             accept=".csv,.xlsx,.xls,.txt"
             onChange={onFileUpload}
             disabled={uploading}
+            aria-label="Upload reconciliation file"
           />
         </label>
         <button

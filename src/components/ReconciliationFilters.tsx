@@ -40,6 +40,7 @@ export default function ReconciliationFilters({
           <label className="flex items-center">
             <input
               type="radio"
+              id="reconciliation-mode-period"
               name="reconciliationMode"
               value="by_period"
               checked={reconciliationMode === 'by_period'}
@@ -51,6 +52,7 @@ export default function ReconciliationFilters({
           <label className="flex items-center">
             <input
               type="radio"
+              id="reconciliation-mode-transaction-id"
               name="reconciliationMode"
               value="by_transaction_id"
               checked={reconciliationMode === 'by_transaction_id'}
@@ -68,6 +70,8 @@ export default function ReconciliationFilters({
           <label className="flex items-center text-sm font-semibold text-gray-700">
             <input
               type="checkbox"
+              id="use-entire-document"
+              name="useEntireDocument"
               checked={useEntireDocument}
               onChange={(e) => setUseEntireDocument(e.target.checked)}
               className="mr-2"
@@ -78,36 +82,42 @@ export default function ReconciliationFilters({
           {!useEntireDocument && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="space-y-2">
-                <label className="flex items-center text-sm font-semibold text-gray-700">
+                <label htmlFor="start-date" className="flex items-center text-sm font-semibold text-gray-700">
                   <Calendar className="w-4 h-4 mr-2" />
                   Start Date
                 </label>
                 <input
                   type="date"
+                  id="start-date"
+                  name="startDate"
                   className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <label className="flex items-center text-sm font-semibold text-gray-700">
+                <label htmlFor="end-date" className="flex items-center text-sm font-semibold text-gray-700">
                   <Calendar className="w-4 h-4 mr-2" />
                   End Date
                 </label>
                 <input
                   type="date"
+                  id="end-date"
+                  name="endDate"
                   className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <label className="flex items-center text-sm font-semibold text-gray-700">
+                <label htmlFor="date-tolerance" className="flex items-center text-sm font-semibold text-gray-700">
                   <Calendar className="w-4 h-4 mr-2" />
                   Date Tolerance (days)
                 </label>
                 <input
                   type="number"
+                  id="date-tolerance"
+                  name="dateTolerance"
                   className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                   value={dateTolerance}
                   onChange={(e) => setDateTolerance(e.target.value)}
@@ -115,12 +125,14 @@ export default function ReconciliationFilters({
                 />
               </div>
               <div className="space-y-2">
-                <label className="flex items-center text-sm font-semibold text-gray-700">
+                <label htmlFor="amount-tolerance" className="flex items-center text-sm font-semibold text-gray-700">
                   <DollarSign className="w-4 h-4 mr-2" />
                   Amount Tolerance
                 </label>
                 <input
                   type="number"
+                  id="amount-tolerance"
+                  name="amountTolerance"
                   step="0.01"
                   className="w-full px-4 py-3 border border-npontu-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-npontu-500 focus:border-transparent transition-all duration-300 bg-gradient-card shadow-inner-warm"
                   value={amountTolerance}

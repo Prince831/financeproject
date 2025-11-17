@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Clock, FileText, Download, AlertTriangle, RefreshCw } from 'lucide-react';
+import { FileText, Download, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { FileResult } from '../hooks/useReconciliation';
 
@@ -56,18 +56,49 @@ export const ReconciliationHistoryPanel: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
+      
+      // Request all reports from backend (up to 500 per page)
       const response = await axios.get<PaginatedResponse<HistoryReport>>(
-        `${API_BASE}/reports`,
+        `${API_BASE}/reports?per_page=500`,
         getAuthHeaders()
       );
 
-      const data = Array.isArray(response.data)
-        ? response.data
-        : response.data.data || [];
-      setReports(data);
+      // Handle paginated response from Laravel
+      let data: HistoryReport[] = [];
+      if (response.data?.data && Array.isArray(response.data.data)) {
+        // Paginated response
+        data = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        // Direct array response
+        data = response.data;
+      }
+
+      // Validate and ensure all fields come from database (no defaults except for display)
+      const validatedReports: HistoryReport[] = data.map((report) => {
+        // Only use data that exists in the database, no fallback defaults
+        return {
+          reference: report.reference || '',
+          reconciliation_date: report.reconciliation_date || '',
+          reconciliation_mode: report.reconciliation_mode || 'by_transaction_id',
+          status: report.status || 'completed',
+          user_name: report.user_name || undefined,
+          file_name: report.file_name || undefined,
+          filters: report.filters || undefined,
+          summary: report.summary || undefined,
+          payload: report.payload || undefined,
+        };
+      });
+
+      setReports(validatedReports);
+      console.log('Fetched reports from database:', {
+        count: validatedReports.length,
+        total: response.data?.total || validatedReports.length,
+        reports: validatedReports.map(r => ({ reference: r.reference, date: r.reconciliation_date }))
+      });
     } catch (err: any) {
       console.error('Failed to fetch reconciliation history:', err);
-      setError('Unable to load reconciliation history.');
+      setError('Unable to load reconciliation history. Please try again.');
+      setReports([]); // Clear reports on error
     } finally {
       setLoading(false);
     }
@@ -125,52 +156,52 @@ export const ReconciliationHistoryPanel: React.FC = () => {
   };
 
   return (
-    <div className="bg-white rounded-3xl shadow-2xl border border-blue-50 overflow-hidden">
-      <div className="bg-gradient-to-r from-npontu-600 to-blue-600 p-6 text-white">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-white/70">History</p>
-              <h3 className="text-2xl font-semibold font-display">Previous Reconciliations</h3>
-            </div>
-            <button
-              onClick={fetchReports}
-              className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide bg-white/15 hover:bg-white/25 px-4 py-2 rounded-xl transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh
-            </button>
-          </div>
+    <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+      {/* Simple Header */}
+      <div className="bg-white border-b border-gray-200 p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Reconciliation History</h3>
+          <button
+            onClick={fetchReports}
+            className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
           <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <label className="text-xs uppercase tracking-wider text-white/70 mb-1 block">
-                Search by Reference
-              </label>
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="e.g. TXN-2024-00045"
-                className="w-full px-4 py-3 text-sm rounded-2xl border border-white/30 bg-white/15 placeholder:text-white/70 focus:outline-none focus:ring-2 focus:ring-white/60"
-              />
-            </div>
-            <div className="w-full sm:w-48">
-              <label className="text-xs uppercase tracking-wider text-white/70 mb-1 block">Mode</label>
-              <select
-                value={selectedMode}
-                onChange={(e) => setSelectedMode(e.target.value as 'all' | 'by_period' | 'by_transaction_id')}
-                className="w-full px-4 py-3 text-sm rounded-2xl border border-white/30 bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/60"
-              >
-                <option value="all">All</option>
-                <option value="by_period">By Period</option>
-                <option value="by_transaction_id">By Transaction ID</option>
-              </select>
-            </div>
-          </div>
+            <label htmlFor="history-search" className="sr-only">
+              Search reconciliation history by reference
+            </label>
+            <input
+              type="text"
+              id="history-search"
+              name="historySearch"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by reference..."
+              className="flex-1 px-4 py-2 text-sm rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              aria-label="Search reconciliation history by reference"
+            />
+            <label htmlFor="history-mode-filter" className="sr-only">
+              Filter reconciliation history by mode
+            </label>
+            <select
+              id="history-mode-filter"
+              name="historyModeFilter"
+              value={selectedMode}
+              onChange={(e) => setSelectedMode(e.target.value as 'all' | 'by_period' | 'by_transaction_id')}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              aria-label="Filter reconciliation history by mode"
+            >
+            <option value="all">All Modes</option>
+            <option value="by_period">By Period</option>
+            <option value="by_transaction_id">By Transaction ID</option>
+          </select>
         </div>
       </div>
 
-      <div className="p-6 space-y-5 bg-white">
+      <div className="p-4 space-y-3 bg-white max-h-[60vh] overflow-y-auto">
         {loading && (
           <p className="text-sm text-slate-500">Loading reconciliation history...</p>
         )}
@@ -185,7 +216,9 @@ export const ReconciliationHistoryPanel: React.FC = () => {
           <p className="text-sm text-slate-500">No prior reconciliations recorded.</p>
         )}
 
-        {filteredReports.slice(0, 6).map((report) => {
+        {filteredReports.length > 0 && filteredReports.map((report) => {
+          // Get values directly from database (summary or payload from reconciliation_runs table)
+          // No static/hardcoded values - all from database
           const totalRecords = getNumber(
             report.summary?.totalRecords,
             report.summary?.fileRecords,
@@ -202,103 +235,82 @@ export const ReconciliationHistoryPanel: React.FC = () => {
             report.payload?.dbOnlyCount,
             report.payload?.mismatched
           );
-          const documentNet =
-            report.summary?.total_document_net ??
-            report.payload?.summary?.total_document_net ??
-            report.payload?.summary?.total_document_net ??
-            '—';
-          const topDiscrepancyRecord = report.payload?.records?.[0];
 
           return (
             <div
               key={report.reference}
-              className="border border-slate-100 rounded-2xl p-5 space-y-4 shadow-sm hover:shadow-md transition-shadow"
+              className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 hover:shadow-sm transition-all bg-white"
             >
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center">
-                    <Clock className="w-6 h-6 text-npontu-600" />
+              <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-sm font-semibold text-gray-900 truncate">{report.reference}</p>
+                    <span className={`px-2 py-0.5 text-xs rounded ${
+                      report.status === 'completed'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {report.status || 'completed'}
+                    </span>
                   </div>
-                <div>
-                    <p className="text-xs uppercase tracking-wider text-slate-500">{report.reference}</p>
-                    <p className="text-base font-semibold text-slate-900">
-                      {new Date(report.reconciliation_date).toLocaleString('en-GB')}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {report.reconciliation_mode === 'by_period' ? 'By Period' : 'By Transaction ID'}
-                    </p>
-                  <p className="text-xs text-slate-400">
-                    {report.user_name ? `By ${report.user_name}` : ' '}
-                    {report.file_name ? ` • ${report.file_name}` : ''}
+                  <p className="text-xs text-gray-500">
+                    {report.reconciliation_date 
+                      ? new Date(report.reconciliation_date).toLocaleString('en-GB', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                      : '—'}
                   </p>
-                  {(report.filters?.start_date || report.filters?.end_date) && (
-                    <p className="text-xs text-slate-400">
-                      Range: {report.filters?.start_date || '—'} → {report.filters?.end_date || '—'}
+                  <p className="text-xs text-gray-400 mt-1">
+                    {report.reconciliation_mode === 'by_period' ? 'By Period' : 'By Transaction ID'}
+                    {report.user_name && ` • ${report.user_name}`}
+                    {report.file_name && ` • ${report.file_name}`}
+                  </p>
+                  {report.filters && (report.filters.start_date || report.filters.end_date) && (
+                    <p className="text-xs text-gray-400">
+                      {report.filters.start_date || '—'} to {report.filters.end_date || '—'}
                     </p>
                   )}
-                  </div>
                 </div>
-                <span
-                  className={`inline-flex items-center justify-center px-3 py-1 text-xs font-semibold rounded-full ${
-                    report.status === 'completed'
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-amber-50 text-amber-700'
-                  }`}
-                >
-                  {report.status?.replace('_', ' ') || 'completed'}
-                </span>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-slate-50 rounded-xl p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">File Records</p>
-                  <p className="text-lg font-semibold text-slate-900">
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="text-center p-2 bg-gray-50 rounded">
+                  <p className="text-xs text-gray-600 mb-1">Total</p>
+                  <p className="text-sm font-semibold text-gray-900">
                     {Number.isFinite(totalRecords) ? totalRecords.toLocaleString() : '—'}
                   </p>
                 </div>
-                <div className="bg-rose-50 rounded-xl p-3">
-                  <p className="text-xs uppercase tracking-wide text-rose-600/70">File-only (missing in DB)</p>
-                  <p className="text-lg font-semibold text-rose-600">
+                <div className="text-center p-2 bg-red-50 rounded">
+                  <p className="text-xs text-red-600 mb-1">File-only</p>
+                  <p className="text-sm font-semibold text-red-700">
                     {Number.isFinite(docOnly) ? docOnly.toLocaleString() : '0'}
                   </p>
                 </div>
-                <div className="bg-blue-50 rounded-xl p-3">
-                  <p className="text-xs uppercase tracking-wide text-blue-600/70">Database-only</p>
-                  <p className="text-lg font-semibold text-blue-700">
+                <div className="text-center p-2 bg-blue-50 rounded">
+                  <p className="text-xs text-blue-600 mb-1">DB-only</p>
+                  <p className="text-sm font-semibold text-blue-700">
                     {Number.isFinite(dbOnly) ? dbOnly.toLocaleString() : '0'}
-                  </p>
-                </div>
-                <div className="bg-slate-50 rounded-xl p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Document Net</p>
-                  <p className="text-lg font-semibold text-slate-900">
-                    {documentNet}
                   </p>
                 </div>
               </div>
 
-              {topDiscrepancyRecord && (
-                <div className="text-xs text-slate-500 bg-slate-50 rounded-xl p-3">
-                  Top discrepancy:{' '}
-                  <span className="font-semibold">{topDiscrepancyRecord.transaction_id}</span>
-                  {topDiscrepancyRecord.discrepancy_count
-                    ? ` (${topDiscrepancyRecord.discrepancy_count} mismatched fields)`
-                    : null}
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-3 justify-end">
+              <div className="flex gap-2 justify-end">
                 <button
                   onClick={() => handleDownload(report.reference, 'pdf')}
-                  className="inline-flex items-center px-4 py-2.5 text-sm font-medium text-white bg-npontu-600 rounded-xl hover:bg-npontu-700 transition-colors"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  <Download className="w-4 h-4 mr-2" />
+                  <Download className="w-3 h-3 mr-1.5" />
                   PDF
                 </button>
                 <button
                   onClick={() => handleDownload(report.reference, 'xlsx')}
-                  className="inline-flex items-center px-4 py-2.5 text-sm font-medium text-npontu-700 border border-npontu-200 rounded-xl hover:bg-npontu-50 transition-colors"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  <FileText className="w-4 h-4 mr-2" />
+                  <FileText className="w-3 h-3 mr-1.5" />
                   Excel
                 </button>
               </div>

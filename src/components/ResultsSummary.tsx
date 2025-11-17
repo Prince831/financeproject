@@ -180,19 +180,63 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs - Dynamic based on actual severity levels in results */}
       <div className="flex gap-2 mt-4 flex-wrap">
-        {['all', 'critical', 'high', 'medium', 'low'].map(tab => (
-          <button key={tab} onClick={() => setSelectedTab(tab)} className={`px-4 py-1 text-sm rounded-lg border transition-colors duration-200 ${
-            selectedTab === tab
+        {/* Always show 'all' tab */}
+        <button key="all" onClick={() => setSelectedTab('all')} className={`px-4 py-1 text-sm rounded-lg border transition-colors duration-200 ${
+          selectedTab === 'all'
+            ? 'bg-blue-600 text-white border-blue-600'
+            : darkMode
+              ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 hover:text-white'
+              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+        }`}>
+          All
+        </button>
+        {/* Only show severity tabs if they exist in the results */}
+        {results.summary?.critical > 0 && (
+          <button key="critical" onClick={() => setSelectedTab('critical')} className={`px-4 py-1 text-sm rounded-lg border transition-colors duration-200 ${
+            selectedTab === 'critical'
+              ? 'bg-red-600 text-white border-red-600'
+              : darkMode
+                ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 hover:text-white'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+          }`}>
+            Critical ({results.summary.critical})
+          </button>
+        )}
+        {results.summary?.high > 0 && (
+          <button key="high" onClick={() => setSelectedTab('high')} className={`px-4 py-1 text-sm rounded-lg border transition-colors duration-200 ${
+            selectedTab === 'high'
+              ? 'bg-orange-600 text-white border-orange-600'
+              : darkMode
+                ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 hover:text-white'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+          }`}>
+            High ({results.summary.high})
+          </button>
+        )}
+        {results.summary?.medium > 0 && (
+          <button key="medium" onClick={() => setSelectedTab('medium')} className={`px-4 py-1 text-sm rounded-lg border transition-colors duration-200 ${
+            selectedTab === 'medium'
+              ? 'bg-yellow-600 text-white border-yellow-600'
+              : darkMode
+                ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 hover:text-white'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+          }`}>
+            Medium ({results.summary.medium})
+          </button>
+        )}
+        {results.summary?.low > 0 && (
+          <button key="low" onClick={() => setSelectedTab('low')} className={`px-4 py-1 text-sm rounded-lg border transition-colors duration-200 ${
+            selectedTab === 'low'
               ? 'bg-blue-600 text-white border-blue-600'
               : darkMode
                 ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 hover:text-white'
                 : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
           }`}>
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            Low ({results.summary.low})
           </button>
-        ))}
+        )}
         <div className="ml-auto flex gap-2 flex-wrap">
           <select
             value={reportFormat}

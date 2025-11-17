@@ -169,13 +169,14 @@ const AuthPage: React.FC = () => {
               {/* Name Field (Register only) */}
               {!isLogin && (
                 <div className="space-y-3">
-                  <label className="text-sm font-semibold text-gray-800 flex items-center">
+                  <label htmlFor="auth-name" className="text-sm font-semibold text-gray-800 flex items-center">
                     <User className="w-5 h-5 mr-3 text-blue-600" />
                     Full Name
                     <span className="text-red-500 ml-1">*</span>
                   </label>
                   <input
                     type="text"
+                    id="auth-name"
                     name="name"
                     value={formData.name}
                     onChange={handleInputChange}
@@ -199,13 +200,14 @@ const AuthPage: React.FC = () => {
 
               {/* Email Field */}
               <div className="space-y-3">
-                <label className="text-sm font-semibold text-gray-800 flex items-center">
+                <label htmlFor="auth-email" className="text-sm font-semibold text-gray-800 flex items-center">
                   <Mail className="w-5 h-5 mr-3 text-blue-600" />
                   Email Address
                   <span className="text-red-500 ml-1">*</span>
                 </label>
                 <input
                   type="email"
+                  id="auth-email"
                   name="email"
                   value={formData.email}
                   onChange={handleInputChange}
@@ -229,7 +231,7 @@ const AuthPage: React.FC = () => {
 
               {/* Password Field */}
               <div className="space-y-3">
-                <label className="text-sm font-semibold text-gray-800 flex items-center">
+                <label htmlFor="auth-password" className="text-sm font-semibold text-gray-800 flex items-center">
                   <Lock className="w-5 h-5 mr-3 text-blue-600" />
                   Password
                   <span className="text-red-500 ml-1">*</span>
@@ -237,6 +239,7 @@ const AuthPage: React.FC = () => {
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    id="auth-password"
                     name="password"
                     value={formData.password}
                     onChange={handleInputChange}
@@ -272,7 +275,7 @@ const AuthPage: React.FC = () => {
               {/* Confirm Password Field (Register only) */}
               {!isLogin && (
                 <div className="space-y-3">
-                  <label className="text-sm font-semibold text-gray-800 flex items-center">
+                  <label htmlFor="auth-password-confirmation" className="text-sm font-semibold text-gray-800 flex items-center">
                     <Shield className="w-5 h-5 mr-3 text-blue-600" />
                     Confirm Password
                     <span className="text-red-500 ml-1">*</span>
@@ -280,12 +283,14 @@ const AuthPage: React.FC = () => {
                   <div className="relative">
                     <input
                       type={showConfirmPassword ? 'text' : 'password'}
+                      id="auth-password-confirmation"
                       name="password_confirmation"
                       value={formData.password_confirmation}
                       onChange={handleInputChange}
                       onBlur={() => handleInputBlur('password_confirmation')}
                       placeholder="Confirm your password"
                       required={!isLogin}
+                      autoComplete="new-password"
                       className={`w-full px-5 py-4 pr-14 border-2 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all duration-300 text-gray-900 placeholder-gray-400 ${
                         validationErrors.password_confirmation && touched.password_confirmation
                           ? 'border-red-300 bg-red-50 focus:border-red-400 focus:ring-red-100'

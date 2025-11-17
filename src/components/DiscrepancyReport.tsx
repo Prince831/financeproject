@@ -146,12 +146,18 @@ export const DiscrepancyReport: React.FC<DiscrepancyReportProps> = ({ results })
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center w-full sm:w-80 border border-slate-200 rounded-xl overflow-hidden">
             <Search className="w-5 h-5 text-slate-500 ml-3" />
+            <label htmlFor="discrepancy-search" className="sr-only">
+              Filter discrepancies by Transaction ID or description
+            </label>
             <input
               type="text"
+              id="discrepancy-search"
+              name="discrepancySearch"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by Transaction ID or description"
               className="flex-1 px-3 py-2 text-sm focus:outline-none"
+              aria-label="Filter discrepancies by Transaction ID or description"
             />
           </div>
           <div className="text-sm text-slate-500">

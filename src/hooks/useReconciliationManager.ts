@@ -66,6 +66,46 @@ const {
   resetAll: resetReconciliation,
 } = useReconciliation(reconciliationMode, startDate, endDate);
 
+  // Sync results from useReconciliation hook to reconciliationResults
+  useEffect(() => {
+    try {
+      if (results && currentStep === 'complete') {
+        // Transform results from useReconciliation to FileResult format
+        const fileResult: FileResult = {
+          totalRecords: results.totalRecords || 0,
+          matched: results.matched || 0,
+          discrepancies: results.discrepancies || 0,
+          missing: results.missing || results.docOnlyCount || 0,
+          mismatched: results.mismatched || results.dbOnlyCount || 0,
+          critical: results.critical || 0,
+          high: results.high || 0,
+          medium: results.medium || 0,
+          low: results.low || 0,
+          totalDebitVariance: results.totalDebitVariance || 0,
+          totalCreditVariance: results.totalCreditVariance || 0,
+          netVariance: results.netVariance || 0,
+          balanceStatus: results.balanceStatus || 'unknown',
+          comparisonTime: results.comparisonTime || 'N/A',
+          timestamp: results.timestamp || new Date().toISOString(),
+          user: results.user || 'Unknown',
+          records: Array.isArray(results.records) ? results.records : [],
+          reference: results.reference,
+          fileRecords: results.fileRecords || results.totalRecords || 0,
+          docOnlyCount: results.docOnlyCount || results.missing || 0,
+          dbOnlyCount: results.dbOnlyCount || results.mismatched || 0,
+        };
+        setReconciliationResults(fileResult);
+        setReconciling(false); // Stop reconciling state when complete
+        console.log('useReconciliationManager: Synced results from useReconciliation hook', fileResult);
+      } else if (currentStep === 'idle') {
+        setReconciling(false); // Stop reconciling state on idle
+      }
+    } catch (error) {
+      console.error('useReconciliationManager: Error syncing results', error);
+      setReconciling(false);
+    }
+  }, [results, currentStep]);
+
   const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
   // Fetch transactions and summary on component mount and when filters change
@@ -100,11 +140,8 @@ const {
     setReconciling(currentStep === 'processing');
   }, [currentStep]);
 
-  useEffect(() => {
-    if (results && currentStep === 'complete') {
-      setReconciliationResults(results);
-    }
-  }, [results, currentStep]);
+  // Note: Results syncing is handled in the useEffect above (lines 70-102)
+  // This duplicate useEffect has been removed to prevent conflicts
 
   const fetchTransactions = async () => {
     if (!token) {
@@ -212,16 +249,29 @@ const {
 
     try {
       setUploading(true);
+      setReconciling(true); // Start reconciling state
       setError(null);
       setErrorType(undefined);
       setUploadedFileName(file.name);
+      setReconciliationResults(null); // Clear previous results
 
-      console.log('useReconciliationManager: Setting uploaded file in reconciliation hook');
+      console.log('useReconciliationManager: Setting uploaded file in reconciliation hook', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
+      });
       setUploadedFile(file);
 
       console.log('useReconciliationManager: Starting reconciliation comparison');
       // Use the enhanced reconciliation hook's startComparison method
-      await startComparison();
+      // Pass the file directly to avoid async state update issues
+      try {
+        await startComparison(file); // Pass file directly to avoid state timing issues
+        console.log('useReconciliationManager: startComparison completed successfully');
+      } catch (comparisonError: any) {
+        console.error('useReconciliationManager: startComparison error', comparisonError);
+        throw comparisonError; // Re-throw to be caught by outer catch
+      }
 
       console.log('useReconciliationManager: Reconciliation initiated; awaiting hook updates');
     } catch (err: any) {
@@ -230,6 +280,7 @@ const {
       setErrorType('file_upload_error');
       setUploadedFileName(null);
       setUploadedFile(null);
+      setReconciling(false);
     } finally {
       setUploading(false);
       console.log('useReconciliationManager: File upload process complete');
