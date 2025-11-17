@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useReconciliation } from './useReconciliation';
+import { useReconciliation, FileResult } from './useReconciliation';
 import { useAuth } from './useAuth';
 
 interface Transaction {
@@ -34,7 +34,7 @@ interface TransactionSummary {
 
 export const useReconciliationManager = () => {
   // Import useAuth here to check authentication status
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -50,51 +50,68 @@ export const useReconciliationManager = () => {
   const [uploading, setUploading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
-  const [reconciliationResults, setReconciliationResults] = useState<any>(null);
+  const [reconciliationResults, setReconciliationResults] = useState<FileResult | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [perPage] = useState(50);
+const [totalPages, setTotalPages] = useState(1);
+const [perPage] = useState(50);
 
   // Use the enhanced reconciliation hook
-  const {
-    setUploadedFile,
-    currentStep,
-    progress,
-    progressStatus,
-    results,
-    startComparison,
-    resetAll: resetReconciliation,
-  } = useReconciliation(reconciliationMode, startDate, endDate);
+const {
+  setUploadedFile,
+  currentStep,
+  progress,
+  progressStatus,
+  results,
+  startComparison,
+  resetAll: resetReconciliation,
+} = useReconciliation(reconciliationMode, startDate, endDate);
 
   const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
   // Fetch transactions and summary on component mount and when filters change
   // Only make API calls when authenticated
+  const getAuthHeaders = () =>
+    token
+      ? {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      : {};
+
   useEffect(() => {
-    console.log('useReconciliationManager: useEffect triggered, isAuthenticated:', isAuthenticated);
-    if (isAuthenticated) {
+    console.log(
+      'useReconciliationManager: useEffect triggered, isAuthenticated:',
+      isAuthenticated,
+      'token present:',
+      !!token
+    );
+    if (isAuthenticated && token) {
       console.log('useReconciliationManager: User authenticated, fetching data');
       fetchTransactions();
       fetchSummary();
     } else {
-      console.log('useReconciliationManager: User not authenticated, skipping API calls');
+      console.log('useReconciliationManager: User not authenticated or missing token, skipping API calls');
     }
-  }, [startDate, endDate, reconciliationMode, useEntireDocument, currentPage, isAuthenticated]);
+  }, [startDate, endDate, reconciliationMode, useEntireDocument, currentPage, isAuthenticated, token]);
 
   // Update reconciling state based on currentStep
   useEffect(() => {
     setReconciling(currentStep === 'processing');
   }, [currentStep]);
 
-  // Update reconciliation results when results change
   useEffect(() => {
-    console.log('useReconciliationManager: Results updated:', results ? 'Results available' : 'No results');
-    if (results) {
+    if (results && currentStep === 'complete') {
       setReconciliationResults(results);
     }
-  }, [results]);
+  }, [results, currentStep]);
 
   const fetchTransactions = async () => {
+    if (!token) {
+      console.warn('useReconciliationManager: Cannot fetch transactions without auth token');
+      return;
+    }
+
     try {
       console.log('useReconciliationManager: Fetching transactions');
       setLoading(true);
@@ -105,7 +122,10 @@ export const useReconciliationManager = () => {
       params.append('per_page', perPage.toString());
 
       console.log('useReconciliationManager: API call to', `${API_BASE}/transactions?${params}`);
-      const response = await axios.get(`${API_BASE}/transactions?${params}`);
+      const response = await axios.get(
+        `${API_BASE}/transactions?${params}`,
+        getAuthHeaders()
+      );
       console.log('useReconciliationManager: Transactions fetched successfully, count:', response.data.data?.length || 0);
       setTransactions(response.data.data || []);
       setTotalPages(response.data.last_page || 1);
@@ -119,6 +139,11 @@ export const useReconciliationManager = () => {
   };
 
   const fetchSummary = async () => {
+    if (!token) {
+      console.warn('useReconciliationManager: Cannot fetch summary without auth token');
+      return;
+    }
+
     try {
       console.log('useReconciliationManager: Fetching transaction summary');
       const params = new URLSearchParams();
@@ -126,17 +151,42 @@ export const useReconciliationManager = () => {
       if (endDate) params.append('end_date', endDate);
 
       console.log('useReconciliationManager: API call to', `${API_BASE}/transaction-summary?${params}`);
-      const response = await axios.get(`${API_BASE}/transaction-summary?${params}`);
+      const response = await axios.get(
+        `${API_BASE}/transaction-summary?${params}`,
+        getAuthHeaders()
+      );
       console.log('useReconciliationManager: Summary fetched successfully');
       setSummary(response.data);
     } catch (err) {
-      console.error('useReconciliationManager: Error fetching summary:', err);
+      if (axios.isAxiosError(err)) {
+        console.error('useReconciliationManager: Error fetching summary:', {
+          message: err.message,
+          status: err.response?.status,
+          statusText: err.response?.statusText,
+          data: err.response?.data,
+          url: err.config?.url
+        });
+        
+        // Only set error if it's not a 401/403 (auth issues are handled elsewhere)
+        if (err.response?.status && err.response.status >= 500) {
+          setError('Failed to fetch transaction summary. Please try again later.');
+          setErrorType('summary_fetch_error');
+        }
+      } else {
+        console.error('useReconciliationManager: Unexpected error fetching summary:', err);
+      }
     }
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!token) {
+      console.warn('useReconciliationManager: Cannot upload file without auth token');
+      setError('Authentication required. Please log in again.');
+      return;
+    }
 
     console.log('useReconciliationManager: Starting file upload for:', file.name);
 
@@ -159,48 +209,7 @@ export const useReconciliationManager = () => {
       // Use the enhanced reconciliation hook's startComparison method
       await startComparison();
 
-      console.log('useReconciliationManager: Reconciliation started, waiting for completion...');
-
-      // Wait for reconciliation to complete by polling the results
-      // This fixes the race condition where results weren't available immediately
-      let attempts = 0;
-      const maxAttempts = 30; // Reduced to 30 seconds for faster feedback
-
-      console.log('useReconciliationManager: Starting completion polling...');
-
-      while (attempts < maxAttempts) {
-        console.log(`useReconciliationManager: Checking results (attempt ${attempts + 1}/${maxAttempts})`);
-
-        // Check if reconciliation completed successfully
-        if (results && currentStep === 'complete') {
-          console.log('useReconciliationManager: Reconciliation completed successfully');
-          setReconciliationResults(results);
-          await fetchTransactions();
-          await fetchSummary();
-          break;
-        }
-
-        // Check if there was an error
-        if (error && currentStep === 'idle') {
-          console.log('useReconciliationManager: Reconciliation failed with error');
-          // Error is already set by the reconciliation hook
-          break;
-        }
-
-        // Wait 500ms before checking again (faster polling)
-        await new Promise(resolve => setTimeout(resolve, 500));
-        attempts++;
-      }
-
-      if (attempts >= maxAttempts) {
-        console.error('useReconciliationManager: Reconciliation timed out after', maxAttempts, 'seconds');
-        setError('Reconciliation is taking longer than expected. Please try again.');
-        setUploadedFileName(null);
-        setUploadedFile(null);
-      } else {
-        console.log('useReconciliationManager: Reconciliation completed in', attempts * 0.5, 'seconds');
-      }
-
+      console.log('useReconciliationManager: Reconciliation initiated; awaiting hook updates');
     } catch (err: any) {
       console.error('useReconciliationManager: Upload error:', err);
       setError('Upload failed. Please check your file and try again.');
@@ -236,23 +245,52 @@ export const useReconciliationManager = () => {
         use_entire_document: useEntireDocument
       };
 
-      // Call reconciliation API
-      const response = await axios.post(`${API_BASE}/reconcile-manual`, reconcileData);
+      if (!token) {
+        console.warn('useReconciliationManager: Cannot reconcile without auth token');
+        setError('Authentication required. Please log in again.');
+        return;
+      }
 
-      // Store reconciliation results
-      setReconciliationResults(response.data);
+      // Call reconciliation API and capture the result
+      const response = await axios.post(
+        `${API_BASE}/reconcile-manual`,
+        reconcileData,
+        getAuthHeaders()
+      );
+
+      // Transform the response to FileResult format and set it
+      if (response.data) {
+        const result: FileResult = {
+          totalRecords: response.data.totalRecords || 0,
+          matched: response.data.matched || 0,
+          discrepancies: response.data.discrepancies || 0,
+          missing: response.data.missing || 0,
+          mismatched: response.data.mismatched || 0,
+          critical: response.data.critical || 0,
+          high: response.data.high || 0,
+          medium: response.data.medium || 0,
+          low: response.data.low || 0,
+          totalDebitVariance: response.data.totalDebitVariance || 0,
+          totalCreditVariance: response.data.totalCreditVariance || 0,
+          netVariance: response.data.netVariance || 0,
+          balanceStatus: response.data.balanceStatus || 'unknown',
+          comparisonTime: response.data.comparisonTime || 'N/A',
+          timestamp: response.data.timestamp || new Date().toISOString(),
+          user: response.data.user || 'Unknown',
+          records: response.data.records || [],
+          reference: response.data.reference,
+          fileRecords: response.data.fileRecords || response.data.totalRecords || 0,
+          docOnlyCount: response.data.docOnlyCount || 0,
+          dbOnlyCount: response.data.dbOnlyCount || 0,
+        };
+        setReconciliationResults(result);
+        console.log('useReconciliationManager: Reconciliation results set', result);
+      }
 
       // Refresh data after reconciliation
       await fetchTransactions();
       await fetchSummary();
       setCurrentPage(1); // Reset to first page after reconciliation
-
-      // Show detailed results
-      const results = response.data;
-      alert(`Manual reconciliation completed!\n\n` +
-            `✅ Records analyzed: ${results.totalRecords || 0}\n` +
-            `⚠️ Data quality issues found: ${results.discrepancies || 0}\n\n` +
-            `Check below for detailed discrepancy information.`);
 
     } catch (err: any) {
       console.error('Reconciliation error:', err);
@@ -272,24 +310,6 @@ export const useReconciliationManager = () => {
     }
   };
 
-  const generateStatement = async () => {
-    try {
-      setError(null);
-      const params = new URLSearchParams();
-      if (startDate) params.append('start_date', startDate);
-      if (endDate) params.append('end_date', endDate);
-
-      await axios.get(`${API_BASE}/generate-statement?${params}`);
-      alert('Statement generated successfully! Use the filters to view the filtered data.');
-      await fetchTransactions();
-      await fetchSummary();
-      setCurrentPage(1); // Reset to first page after filtering
-    } catch (err: any) {
-      setError('Failed to generate statement');
-      console.error('Statement generation error:', err);
-    }
-  };
-
   const exportPDF = async () => {
     try {
       setError(null);
@@ -297,11 +317,24 @@ export const useReconciliationManager = () => {
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
 
-      const response = await axios.post(`${API_BASE}/export-pdf`, {
-        transactions: transactions,
-        summary: summary,
-        filters: { startDate, endDate, reconciliationMode }
-      }, { responseType: 'blob' });
+      if (!token) {
+        console.warn('useReconciliationManager: Cannot export PDF without auth token');
+        setError('Authentication required. Please log in again.');
+        return;
+      }
+
+      const response = await axios.post(
+        `${API_BASE}/export-pdf`,
+        {
+          transactions: transactions,
+          summary: summary,
+          filters: { startDate, endDate, reconciliationMode },
+        },
+        {
+          responseType: 'blob',
+          ...getAuthHeaders(),
+        }
+      );
 
       // Create download link
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -361,7 +394,6 @@ export const useReconciliationManager = () => {
     // Actions
     handleFileUpload,
     handleReconcile,
-    generateStatement,
     exportPDF,
     resetUpload,
     fetchTransactions,

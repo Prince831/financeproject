@@ -1,14 +1,15 @@
 import { useState, useEffect, Component, ReactNode } from 'react';
-import { LogOut, History, AlertCircle, ChevronDown, ChevronUp, FileText } from "lucide-react";
+import { LogOut, AlertCircle, ChevronDown, ChevronUp, FileText, Clock, X } from "lucide-react";
 import { useAuth } from './hooks/useAuth';
 import { useReconciliationManager } from './hooks/useReconciliationManager';
+import { TransactionComparison } from './hooks/useReconciliation';
 import AuthPage from './components/AuthPage';
 import ReconciliationFilters from './components/ReconciliationFilters';
 import ReconciliationUpload from './components/ReconciliationUpload';
 import ReconciliationTable from './components/ReconciliationTable';
-import ReconciliationHistory from './components/ReconciliationHistory';
 import { ProcessingIndicator } from './components/ProcessingIndicator';
-import { DiscrepanciesTable } from './components/DiscrepanciesTable';
+import { DiscrepancyReport } from './components/DiscrepancyReport';
+import { ReconciliationHistoryPanel } from './components/ReconciliationHistoryPanel';
 
 console.log('App.tsx: File loaded');
 
@@ -83,11 +84,8 @@ function App() {
     console.log('App: Auth state - isAuthenticated:', isAuthenticated, 'authLoading:', authLoading, 'user:', user);
 
   // Always call hooks before any conditional returns (Rules of Hooks)
-  const [currentView, setCurrentView] = useState<'reconciliation' | 'history'>('reconciliation');
   const [accountStatementCollapsed, setAccountStatementCollapsed] = useState(false);
-  const [discrepanciesCollapsed, setDiscrepanciesCollapsed] = useState(false);
-  const [discrepanciesCurrentPage, setDiscrepanciesCurrentPage] = useState(1);
-  const [discrepanciesPerPage] = useState(25);
+  const [showHistory, setShowHistory] = useState(false);
 
   const {
     startDate,
@@ -119,7 +117,6 @@ function App() {
     progressStatus,
     handleFileUpload,
     handleReconcile,
-    generateStatement,
     exportPDF,
     resetUpload,
   } = useReconciliationManager();
@@ -147,16 +144,6 @@ function App() {
     };
   }, []);
 
-  // Calculate discrepancies pagination
-  const discrepanciesTotalPages = reconciliationResults?.records
-    ? Math.ceil(reconciliationResults.records.length / discrepanciesPerPage)
-    : 1;
-
-  // Reset discrepancies page when new results come in
-  useEffect(() => {
-    setDiscrepanciesCurrentPage(1);
-  }, [reconciliationResults]);
-
   // Show auth page if not authenticated
   if (!isAuthenticated && !authLoading) {
     console.log('App: Showing AuthPage - not authenticated and not loading');
@@ -179,21 +166,13 @@ function App() {
 
   console.log('App: User authenticated, rendering main app');
 
-  // Function to get severity color classes for discrepancies
-  const getSeverityColor = (severity: string) => {
-    switch (severity.toLowerCase()) {
-      case 'critical':
-        return 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200';
-      case 'high':
-        return 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 border border-orange-200';
-      case 'medium':
-        return 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200';
-      case 'low':
-        return 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200';
-      default:
-        return 'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200';
-    }
-  };
+  const unmatchedRecords =
+    (reconciliationResults?.records ?? []).filter(
+      (record: TransactionComparison) =>
+        record.source === 'document' ||
+        record.status?.toLowerCase().includes('missing in database')
+    );
+  const discrepancyCount = unmatchedRecords.length;
 
   return (
     <ErrorBoundary>
@@ -215,7 +194,7 @@ function App() {
                 <p className="text-gray-600 text-xs sm:text-sm">Financial Reconciliation System</p>
               </div>
             </div>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 w-full sm:w-auto relative">
                <div className="hidden md:flex items-center space-x-3">
                  <span className="text-gray-700 text-sm">Welcome, {user?.name}</span>
                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
@@ -223,15 +202,13 @@ function App() {
                  </div>
                </div>
                <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
-                 {currentView === 'reconciliation' && (
-                   <button
-                     onClick={() => setCurrentView('history')}
-                     className="inline-flex items-center px-3 sm:px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors w-full sm:w-auto justify-center sm:justify-start"
-                   >
-                     <History className="w-4 h-4 mr-2" />
-                     History
-                   </button>
-                 )}
+                 <button
+                   onClick={() => setShowHistory((prev) => !prev)}
+                   className="inline-flex items-center px-3 sm:px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors w-full sm:w-auto justify-center sm:justify-start"
+                 >
+                   <Clock className="w-4 h-4 mr-2" />
+                   History
+                 </button>
                  <button
                    onClick={logout}
                    className="inline-flex items-center px-3 sm:px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors w-full sm:w-auto justify-center sm:justify-start"
@@ -240,68 +217,79 @@ function App() {
                    Logout
                  </button>
                </div>
+
              </div>
           </div>
         </div>
       </div>
 
-      {currentView === 'reconciliation' ? (
-        <div className="relative w-full max-w-7xl mx-auto p-6 space-y-8">
-          {/* Error Banner - Show critical errors that prevent normal operation */}
-          {error && errorType === 'reconciliation_processing_error' && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-              <div className="flex items-center">
-                <AlertCircle className="w-5 h-5 text-red-500 mr-3" />
-                <div>
-                  <h3 className="text-red-800 font-medium">Reconciliation Error</h3>
-                  <p className="text-red-600 text-sm mt-1">{error}</p>
-                  <button
-                    onClick={() => setError(null)}
-                    className="mt-2 text-red-700 hover:text-red-900 text-sm underline"
-                  >
-                    Dismiss
-                  </button>
-                </div>
+      <div className="relative w-full max-w-7xl mx-auto p-6 space-y-8">
+        {error && errorType === 'reconciliation_processing_error' && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <AlertCircle className="w-5 h-5 text-red-500 mr-3" />
+              <div>
+                <h3 className="text-red-800 font-medium">Reconciliation Error</h3>
+                <p className="text-red-600 text-sm mt-1">{error}</p>
+                <button
+                  onClick={() => setError(null)}
+                  className="mt-2 text-red-700 hover:text-red-900 text-sm underline"
+                >
+                  Dismiss
+                </button>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Statement Filters Card */}
-          <ReconciliationFilters
-            reconciliationMode={reconciliationMode}
-            setReconciliationMode={setReconciliationMode}
-            useEntireDocument={useEntireDocument}
-            setUseEntireDocument={setUseEntireDocument}
-            startDate={startDate}
-            setStartDate={setStartDate}
-            endDate={endDate}
-            setEndDate={setEndDate}
-            dateTolerance={dateTolerance}
-            setDateTolerance={setDateTolerance}
-            amountTolerance={amountTolerance}
-            setAmountTolerance={setAmountTolerance}
-            onGenerateStatement={generateStatement}
-          />
+        <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden">
+          <div className="bg-gradient-to-r from-npontu-600 to-npontu-800 p-6 text-white">
+            <h3 className="text-2xl font-semibold font-display">Advanced Reconciliation Workspace</h3>
+            <p className="text-sm text-white/80">
+              Configure filters, upload supporting documents, and run by-transaction comparisons in one view.
+            </p>
+          </div>
+          <div className="p-6 space-y-6">
+            <ReconciliationFilters
+              reconciliationMode={reconciliationMode}
+              setReconciliationMode={setReconciliationMode}
+              useEntireDocument={useEntireDocument}
+              setUseEntireDocument={setUseEntireDocument}
+              startDate={startDate}
+              setStartDate={setStartDate}
+              endDate={endDate}
+              setEndDate={setEndDate}
+              dateTolerance={dateTolerance}
+              setDateTolerance={setDateTolerance}
+              amountTolerance={amountTolerance}
+              setAmountTolerance={setAmountTolerance}
+              variant="minimal"
+            />
 
-          {/* System Entries Card */}
-          <ReconciliationUpload
-            uploading={uploading}
-            uploadedFileName={uploadedFileName}
-            reconciliationResults={reconciliationResults}
-            onFileUpload={handleFileUpload}
-            onReset={resetUpload}
-          />
-
-          {/* Progress Indicator */}
-          {reconciling && (
-            <div className="flex justify-center">
-              <ProcessingIndicator
-                progress={progress}
-                progressStatus={progressStatus}
-                darkMode={false}
+            {reconciliationMode === 'by_transaction_id' && (
+              <ReconciliationUpload
+                uploading={uploading}
+                uploadedFileName={uploadedFileName}
+                onFileUpload={handleFileUpload}
+                onReset={resetUpload}
+                onReconcile={handleReconcile}
+                reconciling={reconciling}
+                discrepancyCount={discrepancyCount}
+                variant="minimal"
               />
-            </div>
-          )}
+            )}
+
+            {reconciling && (
+              <div className="flex justify-center border border-dashed border-slate-200 rounded-2xl p-4">
+                <ProcessingIndicator
+                  progress={progress}
+                  progressStatus={progressStatus}
+                  darkMode={false}
+                />
+              </div>
+            )}
+          </div>
+        </div>
 
           {/* Account Statement Section - Always show this, even with errors */}
           <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden transform hover:scale-[1.02] transition-all duration-300">
@@ -337,12 +325,9 @@ function App() {
                   loading={loading}
                   error={error}
                   errorType={errorType}
-                  reconciling={reconciling}
-                  uploadedFileName={uploadedFileName}
                   currentPage={currentPage}
                   setCurrentPage={setCurrentPage}
                   totalPages={totalPages}
-                  onReconcile={handleReconcile}
                   onExportPDF={exportPDF}
                   onRetry={() => setError(null)}
                 />
@@ -350,78 +335,59 @@ function App() {
             )}
           </div>
 
-          {/* Discrepancies Section - Show when reconciliation results are available */}
-          {reconciliationResults && reconciliationResults.records && reconciliationResults.records.length > 0 && (
-            <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 overflow-hidden transform hover:scale-[1.02] transition-all duration-300">
-              <div
-                className="bg-gradient-to-r from-red-600 to-orange-700 p-6 relative overflow-hidden cursor-pointer hover:bg-gradient-to-r hover:from-red-700 hover:to-orange-800 transition-all duration-300"
-                onClick={() => setDiscrepanciesCollapsed(!discrepanciesCollapsed)}
-              >
-                <div className="absolute inset-0 bg-black/10 backdrop-blur-sm"></div>
-                <div className="relative flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
-                      <AlertCircle className="w-6 h-6 text-white" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-semibold text-white font-display">Reconciliation Discrepancies</h3>
-                      <p className="text-orange-100 text-sm mt-1">Found {reconciliationResults.records.length} issues to review</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    {discrepanciesCollapsed ? (
-                      <ChevronDown className="w-6 h-6 text-white transition-transform duration-300" />
-                    ) : (
-                      <ChevronUp className="w-6 h-6 text-white transition-transform duration-300" />
-                    )}
-                  </div>
-                </div>
-              </div>
-              {!discrepanciesCollapsed && (
-                <div className="p-8">
-                  <div className="mb-4">
-                    <p className="text-gray-600">
-                      Found {reconciliationResults.records.length} discrepancies during reconciliation.
-                      Review the details below to identify and resolve issues.
-                    </p>
-                  </div>
-                  <DiscrepanciesTable
-                    discrepancies={reconciliationResults.records}
-                    darkMode={false}
-                    getSeverityColor={getSeverityColor}
-                    currentPage={discrepanciesCurrentPage}
-                    setCurrentPage={setDiscrepanciesCurrentPage}
-                    totalPages={discrepanciesTotalPages}
-                    itemsPerPage={discrepanciesPerPage}
-                  />
-                </div>
-              )}
+        {!loading && transactions.length === 0 && !error && (
+          <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 p-8 text-center">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FileText className="w-8 h-8 text-gray-400" />
             </div>
-          )}
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Data Available</h3>
+            <p className="text-gray-600 mb-4">
+              No transactions are currently loaded. Try adjusting your filters or check your connection.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="bg-npontu-600 text-white px-4 py-2 rounded-lg hover:bg-npontu-700 transition-colors"
+            >
+              Refresh Page
+            </button>
+          </div>
+        )}
 
-          {/* Fallback content when nothing is loaded */}
-          {!loading && transactions.length === 0 && !error && (
-            <div className="bg-white rounded-2xl shadow-floating border border-npontu-200 p-8 text-center">
-              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <FileText className="w-8 h-8 text-gray-400" />
+        {reconciliationResults && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 text-slate-600">
+              <span className="text-sm font-semibold tracking-wide uppercase">Reports</span>
+              <div className="h-px bg-slate-200 flex-1" />
+            </div>
+            <DiscrepancyReport results={reconciliationResults} />
+          </div>
+        )}
+      </div>
+      </div>
+      {showHistory && (
+        <div className="fixed inset-0 z-50 pointer-events-none">
+          <div className="absolute inset-0" onClick={() => setShowHistory(false)} />
+          <div
+            className="pointer-events-auto absolute top-8 right-10 w-[min(90vw,560px)] bg-white border border-slate-200 rounded-3xl shadow-[0_20px_60px_rgba(15,23,42,0.25)]"
+          >
+            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">History</p>
+                <h3 className="text-lg font-semibold text-slate-900">Reconciliation Reports</h3>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Data Available</h3>
-              <p className="text-gray-600 mb-4">
-                No transactions are currently loaded. Try adjusting your filters or check your connection.
-              </p>
               <button
-                onClick={() => window.location.reload()}
-                className="bg-npontu-600 text-white px-4 py-2 rounded-lg hover:bg-npontu-700 transition-colors"
+                onClick={() => setShowHistory(false)}
+                className="text-slate-500 hover:text-slate-800 transition-colors"
               >
-                Refresh Page
+                <X className="w-5 h-5" />
               </button>
             </div>
-          )}
+            <div className="max-h-[78vh] overflow-y-auto">
+              <ReconciliationHistoryPanel />
+            </div>
+          </div>
         </div>
-      ) : (
-        <ReconciliationHistory onBack={() => setCurrentView('reconciliation')} />
       )}
-      </div>
     </ErrorBoundary>
   );
 }

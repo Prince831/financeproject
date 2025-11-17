@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { Calculator, Database, CheckCircle2, AlertTriangle, TrendingUp, Download, FileJson, Mail } from 'lucide-react';
-import { FileResult, Discrepancy } from '../hooks/useReconciliation';
+import { FileResult } from '../hooks/useReconciliation';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
@@ -41,6 +41,8 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailAddress, setEmailAddress] = useState('');
   const [isEmailSending, setIsEmailSending] = useState(false);
+
+  const summaryTotals = results.summary;
 
   const handleEmailClick = () => {
     setShowEmailModal(true);
@@ -82,66 +84,6 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
         </div>
       </div>
 
-      {/* Fields Used Section */}
-      <div className={`mb-6 p-4 ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-lg`}>
-        <h4 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Fields Used for Reconciliation</h4>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-          {/* Core identification field */}
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'
-          }`}>
-            Transaction ID
-          </span>
-
-          {/* Financial fields */}
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'
-          }`}>
-            Debit Amount
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'
-          }`}>
-            Credit Amount
-          </span>
-
-          {/* Validation fields */}
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Account Number
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Account Name
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Description
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Reference Number
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Transaction Type
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Status
-          </span>
-        </div>
-        <p className={`text-xs mt-2 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-          These fields are extracted from your uploaded file and used for reconciliation analysis.
-        </p>
-      </div>
-
       {/* Report Header Information */}
       <div className={`mb-6 p-4 ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-lg`}>
         <h4 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Report Details</h4>
@@ -176,86 +118,27 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
       <div className={`mb-6 p-4 ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-lg`}>
         <h4 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Financial Summary</h4>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className={`p-4 ${darkMode ? 'bg-red-900/20 border-red-700' : 'bg-red-50 border-red-200'} border rounded-lg`}>
-            <p className={`text-sm font-medium ${darkMode ? 'text-red-300' : 'text-red-700'}`}>Total Debit Variance</p>
-            <p className={`text-2xl font-bold ${darkMode ? 'text-red-400' : 'text-red-600'}`}>
-              {formatCurrency(results.totalDebitVariance || 0)}
-            </p>
-          </div>
           <div className={`p-4 ${darkMode ? 'bg-green-900/20 border-green-700' : 'bg-green-50 border-green-200'} border rounded-lg`}>
-            <p className={`text-sm font-medium ${darkMode ? 'text-green-300' : 'text-green-700'}`}>Total Credit Variance</p>
-            <p className={`text-2xl font-bold ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
-              {formatCurrency(results.totalCreditVariance || 0)}
+            <p className={`text-sm font-medium ${darkMode ? 'text-green-300' : 'text-green-700'}`}>Total Document Net</p>
+            <p className={`text-2xl font-bold ${darkMode ? 'text-green-200' : 'text-green-800'}`}>
+              {summaryTotals ? formatCurrency(parseFloat(summaryTotals.total_document_net || '0')) : formatCurrency(0)}
             </p>
           </div>
           <div className={`p-4 ${darkMode ? 'bg-blue-900/20 border-blue-700' : 'bg-blue-50 border-blue-200'} border rounded-lg`}>
-            <p className={`text-sm font-medium ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>Net Change</p>
-            <p className={`text-2xl font-bold ${results.netVariance >= 0 ? (darkMode ? 'text-green-400' : 'text-green-600') : (darkMode ? 'text-red-400' : 'text-red-600')}`}>
-              {formatCurrency(results.netVariance || 0)}
+            <p className={`text-sm font-medium ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>Total Database Net</p>
+            <p className={`text-2xl font-bold ${darkMode ? 'text-blue-200' : 'text-blue-800'}`}>
+              {summaryTotals ? formatCurrency(parseFloat(summaryTotals.total_database_net || '0')) : formatCurrency(0)}
+            </p>
+          </div>
+          <div className={`p-4 ${darkMode ? 'bg-purple-900/20 border-purple-700' : 'bg-purple-50 border-purple-200'} border rounded-lg`}>
+            <p className={`text-sm font-medium ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>Overall Net Change</p>
+            <p className={`text-2xl font-bold ${summaryTotals && parseFloat(summaryTotals.total_net_change || '0') >= 0 ? (darkMode ? 'text-green-200' : 'text-green-700') : (darkMode ? 'text-red-200' : 'text-red-600')}`}>
+              {summaryTotals ? formatCurrency(parseFloat(summaryTotals.total_net_change || '0')) : formatCurrency(results.netVariance || 0)}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Fields Used Section */}
-      <div className={`mb-6 p-4 ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-lg`}>
-        <h4 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Fields Used for Reconciliation</h4>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-          {/* Core identification field */}
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800'
-          }`}>
-            Transaction ID
-          </span>
-
-          {/* Financial fields */}
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'
-          }`}>
-            Debit Amount
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-green-600 text-white' : 'bg-green-100 text-green-800'
-          }`}>
-            Credit Amount
-          </span>
-
-          {/* Validation fields */}
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Account Number
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Account Name
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Description
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Reference Number
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Transaction Type
-          </span>
-          <span className={`px-3 py-1 text-xs rounded-full font-medium ${
-            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-700'
-          }`}>
-            Status
-          </span>
-        </div>
-        <p className={`text-xs mt-2 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-          These fields are extracted from your uploaded file and used for reconciliation analysis.
-        </p>
-      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         <div className={`p-6 ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-xl shadow-sm`}>
           <div className="flex items-center gap-3 mb-2">
@@ -286,8 +169,8 @@ export const ResultsSummary: React.FC<ResultsSummaryProps> = ({
             </p>
           </div>
           {reconciliationMode === 'by_period' ? (
-            <p className={`text-lg font-bold ${results.netVariance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatCurrency(results.netVariance)}
+            <p className={`text-lg font-bold ${summaryTotals.netVariance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {formatCurrency(summaryTotals.netVariance)}
             </p>
           ) : (
             <p className={`text-lg font-bold ${results.balanceStatus === 'In Balance' ? 'text-green-600' : 'text-red-600'}`}>

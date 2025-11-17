@@ -1,7 +1,38 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useAuth } from './useAuth';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
+export interface FieldComparison {
+  label: string;
+  documentValue: string;
+  databaseValue: string;
+  difference: string;
+  severity: string;
+  hasDifference: boolean;
+}
+
+export interface TransactionComparison {
+  transaction_id: string;
+  fields: Record<string, FieldComparison>;
+  document_net: string;
+  database_net: string;
+  net_change: string;
+  discrepancy_count: number;
+  source?: 'document' | 'database';
+  status?: string;
+  document_record?: Record<string, any> | null;
+  database_record?: Record<string, any> | null;
+}
+
+export interface ReconciliationSummary {
+  total_document_net: string;
+  total_database_net: string;
+  total_net_change: string;
+  total_transactions: number;
+  discrepancy_count: number;
+}
 
 export interface FileResult {
   totalRecords: number;
@@ -20,19 +51,12 @@ export interface FileResult {
   comparisonTime: string;
   timestamp: string;
   user: string;
-  records: Discrepancy[];
+  records: TransactionComparison[];
+  summary?: ReconciliationSummary;
   reference?: string;
-}
-
-export interface Discrepancy {
-  id: string;
-  field: string;
-  documentValue: string;
-  databaseValue: string | null;
-  difference: string;
-  type: string;
-  severity: string;
-  account: string;
+  docOnlyCount?: number;
+  dbOnlyCount?: number;
+  fileRecords?: number;
 }
 
 export interface HistoryItem {
@@ -55,6 +79,17 @@ export interface ProgressStatus {
 }
 
 export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transaction_id', startDate: string, endDate: string) => {
+  const { token, isAuthenticated } = useAuth();
+
+  const getAuthHeaders = () =>
+    token
+      ? {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      : {};
+
   // Load initial state from localStorage
   const getInitialState = (key: string, defaultValue: any) => {
     try {
@@ -122,8 +157,16 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
 
   // Poll for progress updates
   const pollProgress = async (sessionId: string) => {
+    if (!token) {
+      console.warn('useReconciliation: Cannot poll progress without auth token');
+      return null;
+    }
+
     try {
-      const response = await axios.get(`${API_BASE}/reconciliation-progress?session_id=${sessionId}`);
+      const response = await axios.get(
+        `${API_BASE}/reconciliation-progress?session_id=${sessionId}`,
+        getAuthHeaders()
+      );
       const progressData = response.data;
 
       setProgressStatus(progressData);
@@ -165,6 +208,11 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
   }, []);
 
   const startComparison = async () => {
+    if (!isAuthenticated || !token) {
+      setError('Authentication required. Please log in again.');
+      return;
+    }
+
     if (!uploadedFile) return setError('Please upload a file first.');
     if (reconciliationMode === 'by_period' && (!startDate || !endDate)) {
       return setError('Please select both start and end dates for period-based reconciliation.');
@@ -196,7 +244,10 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
     try {
       // Start the reconciliation process
       await axios.post(`${API_BASE}/reconcile`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         timeout: 60000, // 1 minute timeout for faster feedback
         onUploadProgress: (progressEvent) => {
           const percent = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
@@ -252,9 +303,21 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
 
   const handleDownloadReport = async (reportFormat: string) => {
     if (!results) return;
+    if (!token) {
+      console.warn('useReconciliation: Cannot download report without auth token');
+      setError('Authentication required. Please log in again.');
+      return;
+    }
     setIsDownloading(true);
     try {
-      const res = await axios.post(`${API_BASE}/download-report`, { reportData: results, format: reportFormat }, { responseType: 'blob' });
+      const res = await axios.post(
+        `${API_BASE}/download-report`,
+        { reportData: results, format: reportFormat },
+        {
+          responseType: 'blob',
+          ...getAuthHeaders(),
+        }
+      );
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -272,8 +335,17 @@ export const useReconciliation = (reconciliationMode: 'by_period' | 'by_transact
 
   const handleEmailReport = async () => {
     if (!results) return;
+    if (!token) {
+      console.warn('useReconciliation: Cannot email report without auth token');
+      setError('Authentication required. Please log in again.');
+      return;
+    }
     try {
-      await axios.post(`${API_BASE}/email-report`, { reportData: results });
+      await axios.post(
+        `${API_BASE}/email-report`,
+        { reportData: results },
+        getAuthHeaders()
+      );
       alert('Report emailed successfully.');
     } catch (err: any) {
       console.error(err);

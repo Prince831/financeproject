@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, RefreshCcw, Loader2, AlertCircle } from "lucide-react";
+import { FileText, Loader2, AlertCircle } from "lucide-react";
 import { ErrorMessage } from './ErrorMessage';
 
 interface Transaction {
@@ -37,12 +37,9 @@ interface ReconciliationTableProps {
   loading: boolean;
   error: string | null;
   errorType?: string;
-  reconciling: boolean;
-  uploadedFileName: string | null;
   currentPage: number;
   setCurrentPage: (page: number) => void;
   totalPages: number;
-  onReconcile: () => void;
   onExportPDF: () => void;
   onRetry?: () => void;
 }
@@ -53,12 +50,9 @@ export default function ReconciliationTable({
   loading,
   error,
   errorType,
-  reconciling,
-  uploadedFileName,
   currentPage,
   setCurrentPage,
   totalPages,
-  onReconcile,
   onExportPDF,
   onRetry,
 }: ReconciliationTableProps) {
@@ -104,23 +98,6 @@ export default function ReconciliationTable({
           >
             <FileText className="w-5 h-5 mr-2" />
             Export PDF
-          </button>
-          <button
-            onClick={onReconcile}
-            disabled={reconciling}
-            className="bg-gradient-to-r from-accent to-purple-700 text-white py-3 px-6 rounded-xl hover:from-accent hover:to-purple-800 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 transition-all duration-300 font-semibold shadow-floating flex items-center disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02]"
-          >
-            {reconciling ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Reconciling...
-              </>
-            ) : (
-              <>
-                <RefreshCcw className="w-5 h-5 mr-2" />
-                Reconcile
-              </>
-            )}
           </button>
         </div>
       </div>

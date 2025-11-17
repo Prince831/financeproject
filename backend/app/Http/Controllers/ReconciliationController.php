@@ -8,13 +8,65 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Cache;
 use App\Models\User;
-use App\Models\ReconciliationReport;
+use App\Models\ReconciliationRun;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
 use Smalot\PdfParser\Parser;
 
 class ReconciliationController extends Controller
 {
+    /**
+     * Persist a full reconciliation payload.
+     */
+    private function storeReconciliationRun(
+        array $result,
+        string $mode,
+        ?string $startDate,
+        ?string $endDate,
+        ?string $fileName,
+        ?int $fileSize,
+        string $reference,
+        string $status = 'completed'
+    ): ?ReconciliationRun {
+        try {
+            $summary = [
+                'totalRecords' => $result['totalRecords'] ?? null,
+                'matched' => $result['matched'] ?? null,
+                'docOnlyCount' => $result['docOnlyCount'] ?? $result['missing'] ?? null,
+                'dbOnlyCount' => $result['dbOnlyCount'] ?? $result['mismatched'] ?? null,
+                'discrepancies' => $result['discrepancies'] ?? null,
+                'balanceStatus' => $result['balanceStatus'] ?? null,
+                'totalDebitVariance' => $result['totalDebitVariance'] ?? null,
+                'totalCreditVariance' => $result['totalCreditVariance'] ?? null,
+                'netVariance' => $result['netVariance'] ?? null,
+                'fileRecords' => $result['fileRecords'] ?? null,
+            ];
+
+            return ReconciliationRun::create([
+                'reference' => $reference,
+                'reconciliation_date' => now(),
+                'reconciliation_mode' => $mode,
+                'status' => $status,
+                'user_name' => $result['user'] ?? null,
+                'file_name' => $fileName,
+                'file_size' => $fileSize,
+                'filters' => array_filter([
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                ]),
+                'summary' => $summary,
+                'payload' => $result,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to store reconciliation run', [
+                'reference' => $reference,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     /**
      * Update reconciliation progress
      *
@@ -112,40 +164,15 @@ class ReconciliationController extends Controller
                 'records_count' => count($result['records'] ?? []),
             ]);
 
-            try {
-                ReconciliationReport::create([
-                    'reference' => $reference,
-                    'reconciliation_date' => now(),
-                    'total_debit' => (float) ($result['totalDebitVariance'] ?? 0),
-                    'total_credit' => (float) ($result['totalCreditVariance'] ?? 0),
-                    'net_change' => (float) ($result['netVariance'] ?? 0),
-                    'reconciliation_mode' => $mode,
-                    'period_start' => $mode === 'by_period' ? $startDate : null,
-                    'period_end' => $mode === 'by_period' ? $endDate : null,
-                    'total_records' => (int) $result['totalRecords'],
-                    'matched_records' => (int) $result['matched'],
-                    'discrepancies' => (int) $result['discrepancies'],
-                    'discrepancy_details' => $result['records'],
-                    'detailed_records' => $result['detailedRecords'] ?? [],
-                    'status' => 'completed',
-                ]);
-                Log::info('Reconciliation report created successfully', ['reference' => $reference]);
-            } catch (\Exception $dbError) {
-                Log::error('Failed to create reconciliation report', [
-                    'error' => $dbError->getMessage(),
-                    'reference' => $reference,
-                    'data' => [
-                        'total_debit' => (float) ($result['totalDebitVariance'] ?? 0),
-                        'total_credit' => (float) ($result['totalCreditVariance'] ?? 0),
-                        'net_change' => (float) ($result['netVariance'] ?? 0),
-                        'total_records' => (int) $result['totalRecords'],
-                        'matched_records' => (int) $result['matched'],
-                        'discrepancies' => (int) $result['discrepancies'],
-                    ]
-                ]);
-                // Continue without saving to database for now
-                Log::info('Continuing without database save');
-            }
+            $this->storeReconciliationRun(
+                $result,
+                $mode,
+                $startDate,
+                $endDate,
+                null,
+                null,
+                $reference
+            );
 
             // Add reference to result
             $result['reference'] = $reference;
@@ -201,100 +228,49 @@ class ReconciliationController extends Controller
         foreach ($dbRecords as $recordId => $dbRecord) {
             $matched++;
 
-            // Check for potential data quality issues
             $completeRecordData = [
                 'transaction_id' => $recordId,
                 'document_record' => null, // No document for manual reconciliation
                 'database_record' => $dbRecord->toArray(),
                 'discrepancies' => []
             ];
-
-            // Check for negative balances (potential issue)
-            if ($dbRecord->balance < -1000) {
-                $discrepancies++;
-                $high++;
-
-                $discrepancy = [
-                    'id' => $recordId,
-                    'field' => 'Balance',
-                    'documentValue' => 'N/A',
-                    'databaseValue' => number_format($dbRecord->balance, 2),
-                    'difference' => 'Negative balance detected',
-                    'type' => 'Data Quality',
-                    'severity' => 'high',
-                    'account' => $dbRecord->account_number
-                ];
-
-                $records[] = $discrepancy;
-                $completeRecordData['discrepancies'][] = $discrepancy;
+            // For manual reconciliation we only highlight discrepancies when there is something to compare.
+            // Since there is no uploaded document, we skip data-quality heuristics and only include records
+            // when explicit discrepancies are identified elsewhere in the process.
+            if (!empty($completeRecordData['discrepancies'])) {
+                $detailedRecords[] = $completeRecordData;
             }
-
-            // Check for transactions with both debit and credit (data inconsistency)
-            if ($dbRecord->debit_amount > 0 && $dbRecord->credit_amount > 0) {
-                $discrepancies++;
-                $critical++;
-
-                $discrepancy = [
-                    'id' => $recordId,
-                    'field' => 'Transaction Amounts',
-                    'documentValue' => 'N/A',
-                    'databaseValue' => 'Debit: ' . number_format($dbRecord->debit_amount, 2) . ', Credit: ' . number_format($dbRecord->credit_amount, 2),
-                    'difference' => 'Transaction has both debit and credit amounts',
-                    'type' => 'Data Inconsistency',
-                    'severity' => 'critical',
-                    'account' => $dbRecord->account_number
-                ];
-
-                $records[] = $discrepancy;
-                $completeRecordData['discrepancies'][] = $discrepancy;
-            }
-
-            // Check for missing descriptions
-            if (empty(trim($dbRecord->description))) {
-                $discrepancies++;
-                $medium++;
-
-                $discrepancy = [
-                    'id' => $recordId,
-                    'field' => 'Description',
-                    'documentValue' => 'N/A',
-                    'databaseValue' => 'Empty',
-                    'difference' => 'Missing transaction description',
-                    'type' => 'Missing Data',
-                    'severity' => 'medium',
-                    'account' => $dbRecord->account_number
-                ];
-
-                $records[] = $discrepancy;
-                $completeRecordData['discrepancies'][] = $discrepancy;
-            }
-
-            // Check for unusual amounts (> €10,000)
-            $totalAmount = $dbRecord->debit_amount + $dbRecord->credit_amount;
-            if ($totalAmount > 10000) {
-                $discrepancies++;
-                $low++;
-
-                $discrepancy = [
-                    'id' => $recordId,
-                    'field' => 'Amount',
-                    'documentValue' => 'N/A',
-                    'databaseValue' => number_format($totalAmount, 2),
-                    'difference' => 'Large transaction amount detected',
-                    'type' => 'Amount Alert',
-                    'severity' => 'low',
-                    'account' => $dbRecord->account_number
-                ];
-
-                $records[] = $discrepancy;
-                $completeRecordData['discrepancies'][] = $discrepancy;
-            }
-
-            $detailedRecords[] = $completeRecordData;
         }
 
         $netVariance = $totalDebitVariance + $totalCreditVariance;
         $balanceStatus = abs($netVariance) < 0.01 ? 'In Balance' : 'Out of Balance';
+
+        if (empty($records)) {
+            $records[] = [
+                'id' => 'SUMMARY',
+                'field' => 'Summary',
+                'documentValue' => 'All records reconciled',
+                'databaseValue' => 'All records reconciled',
+                'difference' => 'No discrepancies detected between uploaded document and database',
+                'type' => 'Summary',
+                'severity' => 'info',
+                'account' => null,
+                'fieldKey' => null,
+                'documentRawValue' => null,
+                'databaseRawValue' => null,
+                'documentRecord' => null,
+                'databaseRecord' => null,
+            ];
+        }
+
+        if (empty($detailedRecords)) {
+            $detailedRecords[] = [
+                'transaction_id' => 'SUMMARY',
+                'document_record' => null,
+                'database_record' => null,
+                'discrepancies' => [],
+            ];
+        }
 
         return [
             'totalRecords' => $totalRecords,
@@ -311,7 +287,10 @@ class ReconciliationController extends Controller
             'netVariance' => $netVariance,
             'balanceStatus' => $balanceStatus,
             'records' => $records,
-            'detailedRecords' => $detailedRecords
+            'detailedRecords' => $detailedRecords,
+            'fileRecords' => $totalRecords, // For manual reconciliation, all records are from DB
+            'docOnlyCount' => 0, // Manual reconciliation doesn't have uploaded file
+            'dbOnlyCount' => 0 // All records are in DB for manual reconciliation
         ];
     }
 
@@ -472,14 +451,10 @@ class ReconciliationController extends Controller
             ]);
 
             // Only limit processing for period-based reconciliation to maintain performance
-            if ($mode === 'by_period' && count($documentData) > 500) {
-                $documentData = array_slice($documentData, 0, 500);
-                Log::info('File truncated to 500 records for period-based reconciliation performance', ['original_count' => count($documentData)]);
-            }
-            // Allow unlimited records for transaction ID based reconciliation
-            elseif ($mode === 'by_transaction_id') {
-                Log::info('Processing all records for transaction ID based reconciliation', ['record_count' => count($documentData)]);
-            }
+        if ($mode === 'by_period' && count($documentData) > 500) {
+            $documentData = array_slice($documentData, 0, 500);
+            Log::info('File truncated to 500 records for period-based reconciliation performance', ['original_count' => count($documentData)]);
+        }
 
             // Update progress: Starting reconciliation
             $this->updateProgress($sessionId, [
@@ -551,23 +526,15 @@ class ReconciliationController extends Controller
                 ];
             }
 
-            ReconciliationReport::create([
-                'reference' => $reference,
-                'reconciliation_date' => now(),
-                'total_debit' => $result['totalDebitVariance'] ?? 0,
-                'total_credit' => $result['totalCreditVariance'] ?? 0,
-                'net_change' => $result['netVariance'] ?? 0,
-                'reconciliation_mode' => $mode,
-                'period_start' => $mode === 'by_period' ? $request->input('start_date') : null,
-                'period_end' => $mode === 'by_period' ? $request->input('end_date') : null,
-                'total_records' => $result['totalRecords'],
-                'matched_records' => $result['matched'],
-                'discrepancies' => $result['discrepancies'],
-                'discrepancy_details' => $discrepancyDetails, // Limited discrepancy details
-                'detailed_records' => $optimizedDetailedRecords, // Optimized detailed records
-                'status' => 'completed',
-                'unrecognized_count' => $result['unrecognizedCount'] ?? 0, // Add unrecognized count
-            ]);
+            $this->storeReconciliationRun(
+                $result,
+                $mode,
+                $request->input('start_date'),
+                $request->input('end_date'),
+                $file->getClientOriginalName(),
+                $file->getSize(),
+                $reference
+            );
 
             // Add reference to result
             $result['reference'] = $reference;
@@ -710,7 +677,7 @@ class ReconciliationController extends Controller
             $row = $documentData[$i];
             $rowNumber = $i + 1;
 
-            // Validate Transaction ID
+            // Validate Transaction ID (but don't fail - we'll handle missing IDs in processing)
             $transactionId = null;
             foreach (['transaction_id', 'id', 'Transaction ID', 'Txn ID', 'Transaction Id'] as $key) {
                 if (isset($row[$key])) {
@@ -719,8 +686,10 @@ class ReconciliationController extends Controller
                 }
             }
 
+            // Note: We no longer fail validation for missing transaction IDs
+            // They will be processed as discrepancies instead
             if (empty($transactionId)) {
-                $validationErrors[] = "Row {$rowNumber}: Missing Transaction ID";
+                Log::info("Row {$rowNumber}: Missing Transaction ID - will be processed as discrepancy");
             }
 
             // Validate Date
@@ -1064,6 +1033,13 @@ class ReconciliationController extends Controller
 
     private function performReconciliation($documentData, $mode = 'by_transaction_id', $startDate = null, $endDate = null)
     {
+        if ($mode === 'by_transaction_id') {
+            Log::info('Routing to transaction ID presence reconciliation workflow', [
+                'document_records_count' => count($documentData)
+            ]);
+            return $this->performTransactionIdPresenceReconciliation($documentData);
+        }
+
         Log::info('Starting performReconciliation', [
             'document_records_count' => count($documentData),
             'mode' => $mode,
@@ -1072,7 +1048,20 @@ class ReconciliationController extends Controller
             'memory_usage' => memory_get_usage(true)
         ]);
 
-        $totalRecords = count($documentData);
+        $fieldDefinitions = [
+            'account_number' => ['label' => 'Account Number', 'type' => 'string'],
+            'account_name' => ['label' => 'Account Name', 'type' => 'string'],
+            'transaction_date' => ['label' => 'Transaction Date', 'type' => 'date'],
+            'transaction_type' => ['label' => 'Transaction Type', 'type' => 'string'],
+            'status' => ['label' => 'Status', 'type' => 'string'],
+            'description' => ['label' => 'Description', 'type' => 'string'],
+            'reference_number' => ['label' => 'Reference Number', 'type' => 'string'],
+            'debit_amount' => ['label' => 'Debit Amount', 'type' => 'decimal'],
+            'credit_amount' => ['label' => 'Credit Amount', 'type' => 'decimal'],
+            'balance' => ['label' => 'Balance', 'type' => 'decimal'],
+        ];
+
+        $totalRecords = count($documentData); // Count ALL rows in the file
         $matched = 0;
         $discrepancies = 0;
         $missing = 0;
@@ -1081,13 +1070,14 @@ class ReconciliationController extends Controller
         $high = 0;
         $medium = 0;
         $low = 0;
-        $totalDebitVariance = 0;
-        $totalCreditVariance = 0;
+        $totalDebitVariance = 0.0;
+        $totalCreditVariance = 0.0;
+        $totalDocumentNet = 0.0;
+        $totalDatabaseNet = 0.0;
         $records = [];
-        $detailedRecords = []; // Store complete record details for reporting
-        $unrecognizedIds = []; // Track IDs not found in database
+        $detailedRecords = [];
+        $unrecognizedIds = [];
 
-        // Extract transaction IDs from uploaded file
         $documentIds = [];
         foreach ($documentData as $docRecord) {
             $recordId = $docRecord['transaction_id'] ?? $docRecord['id'] ?? $docRecord['Transaction ID'] ?? $docRecord['Txn ID'] ?? $docRecord['Transaction Id'] ?? null;
@@ -1100,107 +1090,182 @@ class ReconciliationController extends Controller
 
         Log::info('Extracted transaction IDs from uploaded file', [
             'total_document_records' => count($documentData),
-            'extracted_ids_count' => count($documentIds),
             'unique_ids_count' => count($uniqueDocumentIds),
-            'sample_ids' => array_slice($uniqueDocumentIds, 0, 5)
         ]);
 
-        // Fetch only database records that match the uploaded file's transaction IDs
-        $dbRecords = \App\Models\Transaction::select(['transaction_id', 'account_number', 'account_name', 'description', 'reference_number', 'debit_amount', 'credit_amount', 'balance', 'transaction_type', 'status', 'transaction_date'])
-            ->whereIn('transaction_id', $uniqueDocumentIds)
-            ->get()
-            ->keyBy('transaction_id');
-
-        // Identify unrecognized IDs (IDs in upload but not found in database)
-        $foundIds = $dbRecords->keys()->toArray();
-        $unrecognizedIds = array_diff($uniqueDocumentIds, $foundIds);
-
-        Log::info('Database lookup results', [
-            'uploaded_unique_ids' => count($uniqueDocumentIds),
-            'found_in_database' => count($foundIds),
-            'unrecognized_ids' => count($unrecognizedIds),
-            'sample_unrecognized' => array_slice($unrecognizedIds, 0, 5)
+        // For period mode, get all DB records in the period
+        $query = \App\Models\Transaction::select([
+            'transaction_id',
+            'account_number',
+            'account_name',
+            'description',
+            'reference_number',
+            'debit_amount',
+            'credit_amount',
+            'balance',
+            'transaction_type',
+            'status',
+            'transaction_date'
         ]);
 
-        Log::info('Database records fetched', [
-            'db_records_count' => $dbRecords->count(),
-            'sample_db_record' => $dbRecords->isNotEmpty() ? $dbRecords->first()->toArray() : null
-        ]);
+        if ($startDate) {
+            $query->where('transaction_date', '>=', $startDate);
+        }
+        if ($endDate) {
+            $query->where('transaction_date', '<=', $endDate);
+        }
+
+        $dbRecords = $query->get()->keyBy('transaction_id');
+
+        $unrecognizedIds = array_values(array_diff($uniqueDocumentIds, $dbRecords->keys()->toArray()));
+
+        // Track which DB records have been matched
+        $matchedDbIds = [];
 
         foreach ($documentData as $docRecord) {
-            // Always identify records by transaction_id first (case-insensitive matching)
             $recordId = $docRecord['transaction_id'] ?? $docRecord['id'] ?? $docRecord['Transaction ID'] ?? $docRecord['Txn ID'] ?? $docRecord['Transaction Id'] ?? null;
 
+            // Process ALL records, even those without transaction IDs
             if (!$recordId) {
+                // Record without transaction ID - create discrepancy entry
                 $missing++;
-                $records[] = [
-                    'id' => 'Unknown',
-                    'field' => 'Record ID',
-                    'documentValue' => 'Missing',
-                    'databaseValue' => null,
-                    'difference' => 'No record ID in document',
-                    'type' => 'Missing',
-                    'severity' => 'critical',
-                    'account' => $docRecord['account'] ?? $docRecord['account_number'] ?? 'Unknown'
+                $discrepancies++;
+                $mismatched++;
+                $high++; // Missing transaction ID is high severity
+
+                // Create a record entry for missing transaction ID
+                $recordFields = [];
+                foreach ($fieldDefinitions as $field => $config) {
+                    $docKey = $this->findFieldKey($docRecord, $field);
+                    $docRaw = $docKey !== null ? $docRecord[$docKey] : null;
+
+                    $documentDisplay = '-';
+                    $databaseDisplay = 'Not in system (missing transaction ID)';
+                    $differenceText = 'Transaction not in system - missing ID';
+                    $severityLevel = 'high';
+                    $hasDifference = true;
+
+                    if ($config['type'] === 'decimal') {
+                        if ($docRaw !== null && trim((string)$docRaw) !== '' && strtolower(trim((string)$docRaw)) !== 'n/a') {
+                            $docNumeric = (float)str_replace([','], '', (string)$docRaw);
+                            $documentDisplay = number_format($docNumeric, 2);
+                        }
+                    } elseif ($config['type'] === 'date') {
+                        $docValue = $docRaw !== null ? trim((string)$docRaw) : null;
+                        $normalizedDoc = $docValue !== null && $docValue !== '' && strtolower($docValue) !== 'n/a' ? $this->normalizeDate($docValue) : null;
+                        if ($normalizedDoc !== null) {
+                            $documentDisplay = $normalizedDoc;
+                        }
+                    } else {
+                        if ($docRaw !== null && trim((string)$docRaw) !== '' && strtolower(trim((string)$docRaw)) !== 'n/a') {
+                            $documentDisplay = trim((string)$docRaw);
+                        }
+                    }
+
+                    $recordFields[$field] = [
+                        'label' => $config['label'],
+                        'documentValue' => $documentDisplay,
+                        'databaseValue' => $databaseDisplay,
+                        'difference' => $differenceText,
+                        'severity' => $severityLevel,
+                        'hasDifference' => $hasDifference,
+                    ];
+                }
+
+                $recordEntry = [
+                    'transaction_id' => 'NO_ID_' . (count($records) + 1), // Generate temporary ID for display
+                    'source' => 'document', // File-only: in file but not in database (no ID to match)
+                    'status' => 'Missing in database',
+                    'fields' => $recordFields,
+                    'document_net' => '0.00',
+                    'database_net' => '0.00',
+                    'net_change' => '0.00',
+                    'discrepancy_count' => count($fieldDefinitions),
+                    'document_record' => $docRecord, // Include full document record for display
+                    'database_record' => null,
                 ];
-                $critical++;
+
+                $records[] = $recordEntry;
+                $detailedRecords[] = $recordEntry;
                 continue;
             }
 
-            // For period mode, filter database records by date range first (only if dates are provided)
-            if ($mode === 'by_period' && $startDate && $endDate) {
-                $filteredRecords = $dbRecords->filter(function($record) use ($startDate, $endDate) {
-                    return $record->transaction_date >= $startDate && $record->transaction_date <= $endDate;
-                });
-                $dbRecordsForMatching = $filteredRecords;
-            } else {
-                $dbRecordsForMatching = $dbRecords;
-            }
-
-            if (!isset($dbRecordsForMatching[$recordId])) {
+            $dbRecord = $dbRecords->get($recordId);
+            if (!$dbRecord) {
+                // Transaction in file but not in database
                 $missing++;
-                $records[] = [
-                    'id' => $recordId,
-                    'field' => 'Record',
-                    'documentValue' => 'Present',
-                    'databaseValue' => null,
-                    'difference' => 'Record not found in database' . ($mode === 'by_period' ? ' for selected period' : ''),
-                    'type' => 'Missing',
-                    'severity' => 'high',
-                    'account' => $docRecord['account'] ?? 'Unknown'
+                $discrepancies++;
+                $mismatched++;
+                $high++; // Not in system is high severity
+
+                // Create a record showing this transaction is missing from database
+                $recordFields = [];
+                foreach ($fieldDefinitions as $field => $config) {
+                    $docKey = $this->findFieldKey($docRecord, $field);
+                    $docRaw = $docKey !== null ? $docRecord[$docKey] : null;
+
+                    $documentDisplay = '-';
+                    $databaseDisplay = 'Not in system';
+                    $differenceText = 'Transaction not in system';
+                    $severityLevel = 'high';
+                    $hasDifference = true;
+
+                    if ($config['type'] === 'decimal') {
+                        if ($docRaw !== null && trim((string)$docRaw) !== '' && strtolower(trim((string)$docRaw)) !== 'n/a') {
+                            $docNumeric = (float)str_replace([','], '', (string)$docRaw);
+                            $documentDisplay = number_format($docNumeric, 2);
+                        }
+                    } elseif ($config['type'] === 'date') {
+                        $docValue = $docRaw !== null ? trim((string)$docRaw) : null;
+                        $normalizedDoc = $docValue !== null && $docValue !== '' && strtolower($docValue) !== 'n/a' ? $this->normalizeDate($docValue) : null;
+                        if ($normalizedDoc !== null) {
+                            $documentDisplay = $normalizedDoc;
+                        }
+                    } else {
+                        if ($docRaw !== null && trim((string)$docRaw) !== '' && strtolower(trim((string)$docRaw)) !== 'n/a') {
+                            $documentDisplay = trim((string)$docRaw);
+                        }
+                    }
+
+                    $recordFields[$field] = [
+                        'label' => $config['label'],
+                        'documentValue' => $documentDisplay,
+                        'databaseValue' => $databaseDisplay,
+                        'difference' => $differenceText,
+                        'severity' => $severityLevel,
+                        'hasDifference' => $hasDifference,
+                    ];
+                }
+
+                $recordEntry = [
+                    'transaction_id' => $recordId,
+                    'source' => 'document', // File-only: in file but not in database
+                    'status' => 'Missing in database',
+                    'fields' => $recordFields,
+                    'document_net' => '0.00',
+                    'database_net' => '0.00',
+                    'net_change' => '0.00',
+                    'discrepancy_count' => count($fieldDefinitions), // All fields are discrepancies
+                    'document_record' => $docRecord, // Include full document record for display
+                    'database_record' => null,
                 ];
-                $high++;
+
+                $records[] = $recordEntry;
+                $detailedRecords[] = $recordEntry;
                 continue;
             }
 
-            $dbRecord = $dbRecordsForMatching[$recordId];
+            // Mark this DB record as matched
+            $matchedDbIds[] = $recordId;
             $matched++;
 
-            // Store complete record data for detailed reporting
-            $completeRecordData = [
-                'transaction_id' => $recordId,
-                'document_record' => $docRecord,
-                'database_record' => $dbRecord->toArray(),
-                'discrepancies' => []
-            ];
-
-            // Compare fields that exist in both document and database
-            $fieldsToCompare = [
-                'account_number' => 'string',
-                'account_name' => 'string',
-                'description' => 'string',
-                'reference_number' => 'string'
-            ];
-
-            // Normalize financial fields: handle combined amount and type (C/D) or separate debit/credit amounts
             $docTypeKey = $this->findFieldKey($docRecord, 'type');
             $docAmountKey = $this->findFieldKey($docRecord, 'amount');
             $docCdKey = $this->findFieldKey($docRecord, 'c/d');
 
-            // Handle C/D column format (like in the CSV)
             if ($docCdKey && $docAmountKey) {
                 $type = strtoupper(trim($docRecord[$docCdKey]));
-                $amount = (float) $docRecord[$docAmountKey];
+                $amount = (float)$docRecord[$docAmountKey];
                 if ($type === 'C') {
                     $docRecord['credit_amount'] = $amount;
                     $docRecord['debit_amount'] = 0;
@@ -1208,11 +1273,9 @@ class ReconciliationController extends Controller
                     $docRecord['debit_amount'] = $amount;
                     $docRecord['credit_amount'] = 0;
                 }
-            }
-            // Handle legacy type + amount format
-            elseif ($docTypeKey && $docAmountKey) {
+            } elseif ($docTypeKey && $docAmountKey) {
                 $type = strtoupper(trim($docRecord[$docTypeKey]));
-                $amount = (float) $docRecord[$docAmountKey];
+                $amount = (float)$docRecord[$docAmountKey];
                 if ($type === 'C') {
                     $docRecord['credit_amount'] = $amount;
                     $docRecord['debit_amount'] = 0;
@@ -1222,149 +1285,276 @@ class ReconciliationController extends Controller
                 }
             }
 
-            // Check for financial fields if they exist in document (case insensitive)
-            $financialFields = [];
-            $docRecordLower = array_change_key_case($docRecord, CASE_LOWER);
-            if (isset($docRecordLower['debit_amount']) || isset($docRecordLower['debit amount'])) $financialFields['debit_amount'] = 'decimal';
-            if (isset($docRecordLower['credit_amount']) || isset($docRecordLower['credit amount'])) $financialFields['credit_amount'] = 'decimal';
-            if (isset($docRecordLower['balance'])) $financialFields['balance'] = 'decimal';
+            $recordFields = [];
+            $recordDiscrepancies = 0;
+            $documentDebit = 0.0;
+            $documentCredit = 0.0;
+            $databaseDebit = (float)($dbRecord->debit_amount ?? 0);
+            $databaseCredit = (float)($dbRecord->credit_amount ?? 0);
 
-            // Compare financial fields
-            foreach ($financialFields as $field => $type) {
-                // Handle case insensitive field names
+            foreach ($fieldDefinitions as $field => $config) {
                 $docKey = $this->findFieldKey($docRecord, $field);
-                $docValue = $docKey !== null ? (float) $docRecord[$docKey] : 0;
-                $dbValue = isset($dbRecord->$field) ? (float) $dbRecord->$field : 0;
+                $docRaw = $docKey !== null ? $docRecord[$docKey] : null;
+                $dbRaw = $dbRecord->$field ?? null;
 
-                if (abs($docValue - $dbValue) > 0.01) { // Allow for small floating point differences
-                    $variance = $docValue - $dbValue;
-                    $discrepancies++;
-                    $mismatched++;
+                $documentDisplay = '-';
+                $databaseDisplay = '-';
+                $differenceText = 'Match';
+                $severityLevel = 'match';
+                $hasDifference = false;
 
-                    // Calculate variance impact
+                if ($config['type'] === 'decimal') {
+                    $docNumeric = null;
+                    if ($docRaw !== null && trim((string)$docRaw) !== '' && strtolower(trim((string)$docRaw)) !== 'n/a') {
+                        $docNumeric = (float)str_replace([','], '', (string)$docRaw);
+                    }
+                    $dbNumeric = $dbRaw !== null ? (float)$dbRaw : 0.0;
+
+                    if ($docNumeric !== null) {
+                        $documentDisplay = number_format($docNumeric, 2);
+                    }
+                    if ($dbRaw !== null) {
+                        $databaseDisplay = number_format($dbNumeric, 2);
+                    }
+
                     if ($field === 'debit_amount') {
-                        $totalDebitVariance += $variance;
-                    } elseif ($field === 'credit_amount') {
-                        $totalCreditVariance += $variance;
+                        $documentDebit = $docNumeric ?? 0.0;
+                    }
+                    if ($field === 'credit_amount') {
+                        $documentCredit = $docNumeric ?? 0.0;
                     }
 
-                    // Determine severity based on variance amount
-                    $severity = 'low';
-                    if (abs($variance) >= 1000) {
-                        $severity = 'critical';
-                        $critical++;
-                    } elseif (abs($variance) >= 100) {
-                        $severity = 'high';
-                        $high++;
-                    } elseif (abs($variance) >= 10) {
-                        $severity = 'medium';
-                        $medium++;
+                    if ($docNumeric === null) {
+                        $differenceText = 'Missing in uploaded file';
+                        $severityLevel = 'high';
+                        $hasDifference = true;
                     } else {
-                        $low++;
+                        $variance = $docNumeric - $dbNumeric;
+                        if (abs($variance) > 0.01) {
+                            $differenceText = number_format($variance, 2);
+                            $hasDifference = true;
+
+                            if (abs($variance) >= 1000) {
+                                $severityLevel = 'critical';
+                            } elseif (abs($variance) >= 100) {
+                                $severityLevel = 'high';
+                            } elseif (abs($variance) >= 10) {
+                                $severityLevel = 'medium';
+                            } else {
+                                $severityLevel = 'low';
+                            }
+
+                            if ($field === 'debit_amount') {
+                                $totalDebitVariance += $variance;
+                            } elseif ($field === 'credit_amount') {
+                                $totalCreditVariance += $variance;
+                            }
+                        } else {
+                            $differenceText = '0.00';
+                        }
+                    }
+                } elseif ($config['type'] === 'date') {
+                    $docValue = $docRaw !== null ? trim((string)$docRaw) : null;
+                    $dbValue = $dbRaw !== null ? trim((string)$dbRaw) : null;
+
+                    $normalizedDoc = $docValue !== null && $docValue !== '' && strtolower($docValue) !== 'n/a' ? $this->normalizeDate($docValue) : null;
+                    $normalizedDb = $dbValue !== null && $dbValue !== '' ? $this->normalizeDate($dbValue) : null;
+
+                    if ($normalizedDoc !== null) {
+                        $documentDisplay = $normalizedDoc;
+                    }
+                    if ($normalizedDb !== null) {
+                        $databaseDisplay = $normalizedDb;
                     }
 
-                    $discrepancy = [
-                        'id' => $recordId,
-                        'field' => ucfirst(str_replace('_', ' ', $field)),
-                        'documentValue' => number_format($docValue, 2),
-                        'databaseValue' => number_format($dbValue, 2),
-                        'difference' => number_format($variance, 2),
-                        'type' => 'Variance',
-                        'severity' => $severity,
-                        'account' => $docRecord['account'] ?? $recordId
-                    ];
+                    if ($normalizedDoc === null) {
+                        $differenceText = 'Missing in uploaded file';
+                        $severityLevel = 'medium';
+                        $hasDifference = true;
+                    } elseif ($normalizedDb === null) {
+                        $differenceText = 'Missing in database';
+                        $severityLevel = 'medium';
+                        $hasDifference = true;
+                    } elseif (strcasecmp($normalizedDoc, $normalizedDb) !== 0) {
+                        $differenceText = 'Date mismatch';
+                        $severityLevel = 'medium';
+                        $hasDifference = true;
+                    }
+                } else {
+                    $docValue = null;
+                    if ($docRaw !== null && trim((string)$docRaw) !== '' && strtolower(trim((string)$docRaw)) !== 'n/a') {
+                        $docValue = trim((string)$docRaw);
+                    }
+                    $dbValue = $dbRaw !== null && trim((string)$dbRaw) !== '' ? trim((string)$dbRaw) : null;
 
-                    $records[] = $discrepancy;
-                    $completeRecordData['discrepancies'][] = $discrepancy;
+                    if ($docValue !== null) {
+                        $documentDisplay = $docValue;
+                    }
+                    if ($dbValue !== null) {
+                        $databaseDisplay = $dbValue;
+                    }
+
+                    if ($docValue === null) {
+                        $differenceText = 'Missing in uploaded file';
+                        $severityLevel = 'medium';
+                        $hasDifference = true;
+                    } elseif ($dbValue === null) {
+                        $differenceText = 'Missing in database';
+                        $severityLevel = 'medium';
+                        $hasDifference = true;
+                    } elseif (strcasecmp($docValue, $dbValue) !== 0) {
+                        $differenceText = 'Value mismatch';
+                        $severityLevel = in_array($field, ['account_number', 'account_name']) ? 'high' : 'low';
+                        $hasDifference = true;
+                    }
                 }
-            }
 
-            // Compare text fields
-            foreach ($fieldsToCompare as $field => $type) {
-                $docKey = $this->findFieldKey($docRecord, $field);
-                $docValue = $docKey !== null ? trim($docRecord[$docKey]) : '';
-                $dbValue = trim($dbRecord->$field ?? '');
-
-                if (strtolower($docValue) !== strtolower($dbValue)) {
+                if ($hasDifference) {
                     $discrepancies++;
                     $mismatched++;
+                    $recordDiscrepancies++;
 
-                    // Determine severity for text mismatches
-                    $severity = 'low';
-                    if (in_array($field, ['account_number', 'account_name'])) {
-                        $severity = 'high';
-                        $high++;
-                    } elseif (in_array($field, ['description', 'reference_number'])) {
-                        $severity = 'medium';
-                        $medium++;
-                    } else {
-                        $low++;
+                    switch ($severityLevel) {
+                        case 'critical':
+                            $critical++;
+                            break;
+                        case 'high':
+                            $high++;
+                            break;
+                        case 'medium':
+                            $medium++;
+                            break;
+                        case 'low':
+                            $low++;
+                            break;
+                    }
+                }
+
+                $recordFields[$field] = [
+                    'label' => $config['label'],
+                    'documentValue' => $documentDisplay,
+                    'databaseValue' => $databaseDisplay,
+                    'difference' => $differenceText,
+                    'severity' => $severityLevel,
+                    'hasDifference' => $hasDifference,
+                ];
+            }
+
+            $documentNet = $documentCredit - $documentDebit;
+            $databaseNet = $databaseCredit - $databaseDebit;
+            $netChangeValue = $documentNet - $databaseNet;
+
+            $totalDocumentNet += $documentNet;
+            $totalDatabaseNet += $databaseNet;
+
+            $recordEntry = [
+                'transaction_id' => $recordId,
+                'fields' => $recordFields,
+                'document_net' => number_format($documentNet, 2),
+                'database_net' => number_format($databaseNet, 2),
+                'net_change' => number_format($netChangeValue, 2),
+                'discrepancy_count' => $recordDiscrepancies,
+            ];
+
+            $records[] = $recordEntry;
+
+            if ($recordDiscrepancies > 0) {
+                $detailedRecords[] = $recordEntry;
+            }
+        }
+
+        // For period mode, add records for DB transactions not in the uploaded file
+        if ($mode === 'by_period') {
+            foreach ($dbRecords as $dbId => $dbRecord) {
+                if (!in_array($dbId, $matchedDbIds)) {
+                    // Transaction in database but not in uploaded file
+                    $missing++;
+                    $discrepancies++;
+                    $mismatched++;
+                    $high++; // Not in file is high severity
+
+                    $recordFields = [];
+                    foreach ($fieldDefinitions as $field => $config) {
+                        $dbRaw = $dbRecord->$field ?? null;
+
+                        $documentDisplay = 'Not in file';
+                        $databaseDisplay = '-';
+                        $differenceText = 'Transaction not in file';
+                        $severityLevel = 'high';
+                        $hasDifference = true;
+
+                        if ($config['type'] === 'decimal') {
+                            if ($dbRaw !== null) {
+                                $dbNumeric = (float)$dbRaw;
+                                $databaseDisplay = number_format($dbNumeric, 2);
+                            }
+                        } elseif ($config['type'] === 'date') {
+                            $dbValue = $dbRaw !== null ? trim((string)$dbRaw) : null;
+                            $normalizedDb = $dbValue !== null && $dbValue !== '' ? $this->normalizeDate($dbValue) : null;
+                            if ($normalizedDb !== null) {
+                                $databaseDisplay = $normalizedDb;
+                            }
+                        } else {
+                            if ($dbRaw !== null && trim((string)$dbRaw) !== '') {
+                                $databaseDisplay = trim((string)$dbRaw);
+                            }
+                        }
+
+                        $recordFields[$field] = [
+                            'label' => $config['label'],
+                            'documentValue' => $documentDisplay,
+                            'databaseValue' => $databaseDisplay,
+                            'difference' => $differenceText,
+                            'severity' => $severityLevel,
+                            'hasDifference' => $hasDifference,
+                        ];
                     }
 
-                    $discrepancy = [
-                        'id' => $recordId,
-                        'field' => ucfirst(str_replace('_', ' ', $field)),
-                        'documentValue' => $docValue,
-                        'databaseValue' => $dbValue,
-                        'difference' => 'Text mismatch',
-                        'type' => 'Mismatch',
-                        'severity' => $severity,
-                        'account' => $docRecord['account_number'] ?? $recordId
+                    $databaseDebit = (float)($dbRecord->debit_amount ?? 0);
+                    $databaseCredit = (float)($dbRecord->credit_amount ?? 0);
+                    $databaseNet = $databaseCredit - $databaseDebit;
+
+                    $totalDatabaseNet += $databaseNet;
+
+                    $recordEntry = [
+                        'transaction_id' => $dbId,
+                        'source' => 'database', // Database-only: in database but not in file
+                        'status' => 'Missing in uploaded file',
+                        'fields' => $recordFields,
+                        'document_net' => '0.00',
+                        'database_net' => number_format($databaseNet, 2),
+                        'net_change' => number_format(0 - $databaseNet, 2),
+                        'discrepancy_count' => count($fieldDefinitions), // All fields are discrepancies
+                        'document_record' => null,
+                        'database_record' => $dbRecord->toArray(), // Include full database record for display
                     ];
 
-                    $records[] = $discrepancy;
-                    $completeRecordData['discrepancies'][] = $discrepancy;
+                    $records[] = $recordEntry;
+                    $detailedRecords[] = $recordEntry;
                 }
             }
-
-            // Compare any additional fields that might exist
-            $additionalFields = ['transaction_type', 'status'];
-            foreach ($additionalFields as $field) {
-                $docKey = $this->findFieldKey($docRecord, $field);
-                if ($docKey !== null) {
-                    $docValue = trim($docRecord[$docKey]);
-                    $dbValue = isset($dbRecord->$field) ? trim($dbRecord->$field) : '';
-
-                    if (strtolower($docValue) !== strtolower($dbValue)) {
-                        $discrepancies++;
-                        $mismatched++;
-
-                        $severity = in_array($field, ['transaction_type']) ? 'high' : 'medium';
-                        ${$severity}++;
-
-                        $discrepancy = [
-                            'id' => $recordId,
-                            'field' => ucfirst(str_replace('_', ' ', $field)),
-                            'documentValue' => $docValue,
-                            'databaseValue' => $dbValue,
-                            'difference' => 'Field mismatch',
-                            'type' => 'Mismatch',
-                            'severity' => $severity,
-                            'account' => $docRecord['account_number'] ?? $docRecord['account'] ?? $recordId
-                        ];
-
-                        $records[] = $discrepancy;
-                        $completeRecordData['discrepancies'][] = $discrepancy;
-                    }
-                }
-            }
-
-            // Add complete record data to detailed records array
-            $detailedRecords[] = $completeRecordData;
         }
 
         $netVariance = $totalDebitVariance + $totalCreditVariance;
         $balanceStatus = abs($netVariance) < 0.01 ? 'In Balance' : 'Out of Balance';
-
-        // Add unrecognized IDs count to the result
         $unrecognizedCount = count($unrecognizedIds);
 
+        $summary = [
+            'total_document_net' => number_format($totalDocumentNet, 2),
+            'total_database_net' => number_format($totalDatabaseNet, 2),
+            'total_net_change' => number_format($totalDocumentNet - $totalDatabaseNet, 2),
+            'total_transactions' => count($records),
+            'discrepancy_count' => $discrepancies,
+        ];
+
         $result = [
-            'totalRecords' => $totalRecords,
+            'totalRecords' => $totalRecords, // Always the count from uploaded file
             'matched' => $matched,
             'discrepancies' => $discrepancies,
             'missing' => $missing,
             'mismatched' => $mismatched,
+            'docOnlyCount' => $missing,
+            'dbOnlyCount' => $mismatched,
             'critical' => $critical,
             'high' => $high,
             'medium' => $medium,
@@ -1373,10 +1563,12 @@ class ReconciliationController extends Controller
             'totalCreditVariance' => $totalCreditVariance,
             'netVariance' => $netVariance,
             'balanceStatus' => $balanceStatus,
-            'records' => $records,
-            'detailedRecords' => $detailedRecords, // Include complete record details
-            'unrecognizedIds' => $unrecognizedIds, // List of IDs not found in database
-            'unrecognizedCount' => $unrecognizedCount // Count of unrecognized IDs
+            'records' => array_values($records),
+            'detailedRecords' => array_values($detailedRecords),
+            'unrecognizedIds' => $unrecognizedIds,
+            'unrecognizedCount' => $unrecognizedCount,
+            'summary' => $summary,
+            'fileRecords' => $totalRecords, // Explicitly track file records
         ];
 
         Log::info('performReconciliation completed', [
@@ -1392,6 +1584,259 @@ class ReconciliationController extends Controller
         ]);
 
         return $result;
+    }
+
+    private function performTransactionIdPresenceReconciliation(array $documentData)
+    {
+        $fieldDefinitions = [
+            'account_number' => ['label' => 'Account Number', 'type' => 'string'],
+            'account_name' => ['label' => 'Account Name', 'type' => 'string'],
+            'transaction_date' => ['label' => 'Transaction Date', 'type' => 'date'],
+            'transaction_type' => ['label' => 'Transaction Type', 'type' => 'string'],
+            'description' => ['label' => 'Description', 'type' => 'string'],
+            'reference_number' => ['label' => 'Reference Number', 'type' => 'string'],
+            'debit_amount' => ['label' => 'Debit Amount', 'type' => 'decimal'],
+            'credit_amount' => ['label' => 'Credit Amount', 'type' => 'decimal'],
+            'balance' => ['label' => 'Balance', 'type' => 'decimal'],
+        ];
+
+        $totalRecords = count($documentData);
+        $documentRecords = [];
+        $documentRecordsWithoutId = [];
+        $totalDocumentNet = 0.0;
+
+        foreach ($documentData as $index => $record) {
+            $transactionId = $this->extractTransactionIdFromArray($record);
+            $totalDocumentNet += $this->calculateNetFromArray($record);
+
+            if ($transactionId) {
+                $documentRecords[$transactionId] = $record;
+            } else {
+                $documentRecordsWithoutId[] = [
+                    'transaction_id' => 'FILE_ONLY_NO_ID_' . str_pad((string)($index + 1), 4, '0', STR_PAD_LEFT),
+                    'record' => $record,
+                ];
+            }
+        }
+
+        $dbRecords = \App\Models\Transaction::select([
+            'transaction_id',
+            'account_number',
+            'account_name',
+            'description',
+            'reference_number',
+            'debit_amount',
+            'credit_amount',
+            'balance',
+            'transaction_type',
+            'status',
+            'transaction_date'
+        ])->get()->keyBy('transaction_id');
+
+        $totalDatabaseNet = 0.0;
+        foreach ($dbRecords as $dbRecord) {
+            $totalDatabaseNet += $this->calculateNetFromModel($dbRecord);
+        }
+
+        $matched = 0;
+        $records = [];
+        $docOnlyCount = 0;
+        $dbOnlyCount = 0;
+
+        foreach ($documentRecords as $transactionId => $docRecord) {
+            if ($dbRecords->has($transactionId)) {
+                $matched++;
+                continue;
+            }
+
+            $docOnlyCount++;
+            $records[] = $this->buildPresenceRecord($transactionId, $docRecord, null, $fieldDefinitions, 'document');
+        }
+
+        foreach ($documentRecordsWithoutId as $placeholder) {
+            $docOnlyCount++;
+            $records[] = $this->buildPresenceRecord($placeholder['transaction_id'], $placeholder['record'], null, $fieldDefinitions, 'document');
+        }
+
+        foreach ($dbRecords as $transactionId => $dbRecord) {
+            if (array_key_exists($transactionId, $documentRecords)) {
+                continue;
+            }
+
+            $dbOnlyCount++;
+            $records[] = $this->buildPresenceRecord($transactionId, null, $dbRecord, $fieldDefinitions, 'database');
+        }
+
+        $discrepancies = count($records);
+        $balanceStatus = $discrepancies === 0 ? 'In Balance' : 'Out of Balance';
+
+        $summary = [
+            'total_document_net' => number_format($totalDocumentNet, 2),
+            'total_database_net' => number_format($totalDatabaseNet, 2),
+            'total_net_change' => number_format($totalDocumentNet - $totalDatabaseNet, 2),
+            'total_transactions' => $totalRecords,
+            'discrepancy_count' => $discrepancies,
+        ];
+
+        return [
+            'totalRecords' => $totalRecords,
+            'matched' => $matched,
+            'discrepancies' => $discrepancies,
+            'missing' => $docOnlyCount,
+            'mismatched' => $dbOnlyCount,
+            'critical' => 0,
+            'high' => $discrepancies,
+            'medium' => 0,
+            'low' => 0,
+            'totalDebitVariance' => 0,
+            'totalCreditVariance' => 0,
+            'netVariance' => $totalDocumentNet - $totalDatabaseNet,
+            'balanceStatus' => $balanceStatus,
+            'records' => array_values($records),
+            'detailedRecords' => array_values($records),
+            'unrecognizedIds' => [],
+            'unrecognizedCount' => 0,
+            'summary' => $summary,
+            'fileRecords' => $totalRecords,
+            'docOnlyCount' => $docOnlyCount,
+            'dbOnlyCount' => $dbOnlyCount,
+        ];
+    }
+
+    private function extractTransactionIdFromArray(array $record): ?string
+    {
+        $candidates = [
+            'transaction_id',
+            'id',
+            'Transaction ID',
+            'Txn ID',
+            'Transaction Id',
+            'reference',
+            'reference_number'
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (isset($record[$candidate]) && trim((string)$record[$candidate]) !== '') {
+                return trim((string)$record[$candidate]);
+            }
+        }
+
+        return null;
+    }
+
+    private function calculateNetFromArray(array $record): float
+    {
+        $debitKey = $this->findFieldKey($record, 'debit_amount');
+        $creditKey = $this->findFieldKey($record, 'credit_amount');
+        $amountKey = $this->findFieldKey($record, 'amount');
+
+        $debit = $debitKey !== null ? $this->normalizeNumericValue($record[$debitKey]) : 0.0;
+        $credit = $creditKey !== null ? $this->normalizeNumericValue($record[$creditKey]) : 0.0;
+
+        if ($credit === 0.0 && $debit === 0.0 && $amountKey !== null) {
+            return $this->normalizeNumericValue($record[$amountKey]);
+        }
+
+        return $credit - $debit;
+    }
+
+    private function calculateNetFromModel($record): float
+    {
+        $debit = (float)($record->debit_amount ?? 0);
+        $credit = (float)($record->credit_amount ?? 0);
+        return $credit - $debit;
+    }
+
+    private function normalizeNumericValue($value): float
+    {
+        if ($value === null) {
+            return 0.0;
+        }
+
+        $stringValue = trim((string)$value);
+        if ($stringValue === '' || strtolower($stringValue) === 'n/a') {
+            return 0.0;
+        }
+
+        $normalized = str_replace([',', ' '], '', $stringValue);
+        return (float)$normalized;
+    }
+
+    private function formatFieldValue($value, string $type): string
+    {
+        if ($value === null) {
+            return '-';
+        }
+
+        $stringValue = trim((string)$value);
+        if ($stringValue === '' || strtolower($stringValue) === 'n/a') {
+            return '-';
+        }
+
+        switch ($type) {
+            case 'decimal':
+                return number_format($this->normalizeNumericValue($stringValue), 2);
+            case 'date':
+                return $this->normalizeDate($stringValue);
+            default:
+                return $stringValue;
+        }
+    }
+
+    private function buildPresenceFields(array $fieldDefinitions, ?array $docRecord, $dbRecord): array
+    {
+        $fields = [];
+        foreach ($fieldDefinitions as $field => $config) {
+            $docValue = null;
+            $dbValue = null;
+
+            if ($docRecord !== null) {
+                $docKey = $this->findFieldKey($docRecord, $field);
+                $docValue = $docKey !== null ? $docRecord[$docKey] : null;
+            }
+
+            if ($dbRecord !== null) {
+                $dbValue = $dbRecord->$field ?? null;
+            }
+
+            $fields[$field] = [
+                'label' => $config['label'],
+                'documentValue' => $docRecord !== null
+                    ? $this->formatFieldValue($docValue, $config['type'])
+                    : 'Not in uploaded file',
+                'databaseValue' => $dbRecord !== null
+                    ? $this->formatFieldValue($dbValue, $config['type'])
+                    : 'Not in database',
+                'difference' => $docRecord !== null && $dbRecord === null
+                    ? 'Missing in database'
+                    : ($docRecord === null && $dbRecord !== null
+                        ? 'Missing in uploaded file'
+                        : 'Match'),
+                'severity' => 'high',
+                'hasDifference' => true,
+            ];
+        }
+
+        return $fields;
+    }
+
+    private function buildPresenceRecord(string $transactionId, ?array $docRecord, $dbRecord, array $fieldDefinitions, string $source): array
+    {
+        $documentNetValue = $docRecord ? $this->calculateNetFromArray($docRecord) : 0.0;
+        $databaseNetValue = $dbRecord ? $this->calculateNetFromModel($dbRecord) : 0.0;
+
+        return [
+            'transaction_id' => $transactionId,
+            'source' => $source,
+            'status' => $source === 'document' ? 'Missing in database' : 'Missing in uploaded file',
+            'fields' => $this->buildPresenceFields($fieldDefinitions, $docRecord, $dbRecord),
+            'document_net' => number_format($documentNetValue, 2),
+            'database_net' => number_format($databaseNetValue, 2),
+            'net_change' => number_format($documentNetValue - $databaseNetValue, 2),
+            'discrepancy_count' => 1,
+            'document_record' => $docRecord,
+            'database_record' => $dbRecord ? $dbRecord->toArray() : null,
+        ];
     }
 
     /**
@@ -1572,7 +2017,7 @@ class ReconciliationController extends Controller
         try {
             $request->validate([
                 'reference' => 'nullable|string',
-                'reportData' => 'required|array',
+                'reportData' => 'nullable|array',
                 'format' => 'required|in:pdf,xlsx'
             ]);
 
@@ -1580,28 +2025,26 @@ class ReconciliationController extends Controller
             $reportData = $request->input('reportData');
             $format = $request->input('format');
 
-            // If reference is provided, fetch from database
+            // If reference is provided, prefer stored report payload
             if ($reference) {
-                $report = ReconciliationReport::where('reference', $reference)->first();
-                if ($report) {
-                    $reportData = [
-                        'reference' => $report->reference,
-                        'reconciliation_date' => $report->reconciliation_date->toISOString(),
-                        'total_debit' => $report->total_debit,
-                        'total_credit' => $report->total_credit,
-                        'net_change' => $report->net_change,
-                        'reconciliation_mode' => $report->reconciliation_mode,
-                        'period_start' => $report->period_start ? $report->period_start->toISOString() : null,
-                        'period_end' => $report->period_end ? $report->period_end->toISOString() : null,
-                        'total_records' => $report->total_records,
-                        'matched' => $report->matched_records,
-                        'discrepancies' => $report->discrepancies,
-                        'records' => $report->discrepancy_details ?? [],
-                        'comparisonTime' => 'N/A (from database)',
-                        'timestamp' => $report->created_at->toISOString(),
-                        'user' => $request->user()->name,
-                    ];
+                $report = ReconciliationRun::where('reference', $reference)->first();
+                if (!$report) {
+                    return response()->json(['message' => 'Report not found'], 404);
                 }
+                $reportData = $report->payload ?? [];
+                $reportData['reference'] = $reference;
+                $reportData['timestamp'] = $reportData['timestamp']
+                    ?? ($report->reconciliation_date
+                        ? $report->reconciliation_date->toISOString()
+                        : null);
+                $reportData['user'] = $reportData['user'] ?? $report->user_name;
+            }
+
+            if (!$reportData) {
+                return response()->json([
+                    'message' => 'No report data provided.',
+                    'error_type' => 'report_download_error'
+                ], 422);
             }
 
             if ($format === 'pdf') {
@@ -1633,7 +2076,7 @@ class ReconciliationController extends Controller
     public function getReports(Request $request)
     {
         try {
-            $reports = ReconciliationReport::orderBy('created_at', 'desc')
+            $reports = ReconciliationRun::orderBy('reconciliation_date', 'desc')
                 ->paginate(20);
 
             return response()->json($reports);
@@ -1659,28 +2102,23 @@ class ReconciliationController extends Controller
             $period = $request->input('period', '30'); // days
             $startDate = now()->subDays($period);
 
-            $trends = ReconciliationReport::where('created_at', '>=', $startDate)
-                ->orderBy('created_at')
-                ->select([
-                    'created_at',
-                    'discrepancies',
-                    'total_records',
-                    'total_debit',
-                    'total_credit',
-                    'net_change'
-                ])
+            $trends = ReconciliationRun::where('reconciliation_date', '>=', $startDate)
+                ->orderBy('reconciliation_date')
                 ->get()
                 ->map(function ($report) {
+                    $summary = $report->summary ?? [];
+                    $totalRecords = $summary['totalRecords'] ?? $summary['total_records'] ?? 0;
+                    $discrepancies = $summary['discrepancies'] ?? $summary['docOnlyCount'] ?? 0;
                     return [
-                        'date' => $report->created_at->format('Y-m-d'),
-                        'discrepancies' => $report->discrepancies,
-                        'total_records' => $report->total_records,
-                        'discrepancy_rate' => $report->total_records > 0
-                            ? round(($report->discrepancies / $report->total_records) * 100, 2)
+                        'date' => $report->reconciliation_date->format('Y-m-d'),
+                        'discrepancies' => $discrepancies,
+                        'total_records' => $totalRecords,
+                        'discrepancy_rate' => $totalRecords > 0
+                            ? round(($discrepancies / $totalRecords) * 100, 2)
                             : 0,
-                        'total_debit_variance' => abs($report->total_debit),
-                        'total_credit_variance' => abs($report->total_credit),
-                        'net_variance' => abs($report->net_change)
+                        'total_debit_variance' => abs($summary['totalDebitVariance'] ?? 0),
+                        'total_credit_variance' => abs($summary['totalCreditVariance'] ?? 0),
+                        'net_variance' => abs($summary['netVariance'] ?? 0),
                     ];
                 });
 
@@ -1705,7 +2143,7 @@ class ReconciliationController extends Controller
     public function getReport(Request $request, $reference)
     {
         try {
-            $report = ReconciliationReport::where('reference', $reference)->first();
+            $report = ReconciliationRun::where('reference', $reference)->first();
 
             if (!$report) {
                 return response()->json(['message' => 'Report not found'], 404);
@@ -1803,38 +2241,42 @@ class ReconciliationController extends Controller
     public function getTransactionSummary(Request $request)
     {
         try {
-            $query = \App\Models\Transaction::query();
+            $baseQuery = \App\Models\Transaction::query();
 
             // Apply date filters if provided
             if ($request->has('start_date') && $request->filled('start_date')) {
-                $query->where('transaction_date', '>=', $request->input('start_date'));
+                $baseQuery->where('transaction_date', '>=', $request->input('start_date'));
             }
 
             if ($request->has('end_date') && $request->filled('end_date')) {
-                $query->where('transaction_date', '<=', $request->input('end_date'));
+                $baseQuery->where('transaction_date', '<=', $request->input('end_date'));
             }
 
-            $firstTransaction = $query->orderBy('transaction_date', 'asc')->orderBy('id', 'asc')->first();
-            $lastTransaction = $query->orderBy('transaction_date', 'desc')->orderBy('id', 'desc')->first();
+            // Clone queries for different calculations to avoid query state issues
+            $firstTransaction = (clone $baseQuery)->orderBy('transaction_date', 'asc')->orderBy('id', 'asc')->first();
+            $lastTransaction = (clone $baseQuery)->orderBy('transaction_date', 'desc')->orderBy('id', 'desc')->first();
 
             $summary = [
-                'total_transactions' => $query->count(),
-                'total_debit_amount' => $query->sum('debit_amount'),
-                'total_credit_amount' => $query->sum('credit_amount'),
-                'opening_balance' => $firstTransaction ? $firstTransaction->balance : 0,
-                'closing_balance' => $lastTransaction ? $lastTransaction->balance : 0,
-                'debit_transactions' => $query->where('debit_amount', '>', 0)->count(),
-                'credit_transactions' => $query->where('credit_amount', '>', 0)->count(),
+                'total_transactions' => (clone $baseQuery)->count(),
+                'total_debit_amount' => (clone $baseQuery)->sum('debit_amount') ?? 0,
+                'total_credit_amount' => (clone $baseQuery)->sum('credit_amount') ?? 0,
+                'opening_balance' => $firstTransaction ? (float) $firstTransaction->balance : 0,
+                'closing_balance' => $lastTransaction ? (float) $lastTransaction->balance : 0,
+                'debit_transactions' => (clone $baseQuery)->where('debit_amount', '>', 0)->count(),
+                'credit_transactions' => (clone $baseQuery)->where('credit_amount', '>', 0)->count(),
                 'date_range' => [
-                    'start' => $query->min('transaction_date'),
-                    'end' => $query->max('transaction_date')
+                    'start' => (clone $baseQuery)->min('transaction_date'),
+                    'end' => (clone $baseQuery)->max('transaction_date')
                 ]
             ];
 
             return response()->json($summary);
 
         } catch (\Exception $e) {
-            Log::error('Failed to fetch transaction summary', ['error' => $e->getMessage()]);
+            Log::error('Failed to fetch transaction summary', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
             return response()->json([
                 'message' => $userFriendlyMessage,
