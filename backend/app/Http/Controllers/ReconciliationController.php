@@ -2202,6 +2202,15 @@ class ReconciliationController extends Controller
             $perPage = min((int) $request->input('per_page', 50), 50);
             $page = $request->input('page', 1);
 
+            // Check if transactions table exists
+            if (!\Illuminate\Support\Facades\Schema::hasTable('transactions')) {
+                Log::error('Transactions table does not exist');
+                return response()->json([
+                    'message' => 'Transactions table not found. Please run database migrations.',
+                    'error_type' => 'transactions_table_missing'
+                ], 500);
+            }
+
             Log::info('Query before pagination', [
                 'total_count' => $query->count(),
                 'per_page' => $perPage,
@@ -2223,11 +2232,21 @@ class ReconciliationController extends Controller
             return response()->json($transactions);
 
         } catch (\Exception $e) {
-            Log::error('Failed to fetch transactions', ['error' => $e->getMessage()]);
+            Log::error('Failed to fetch transactions', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile()
+            ]);
             $userFriendlyMessage = $this->getUserFriendlyErrorMessage($e);
             return response()->json([
                 'message' => $userFriendlyMessage,
-                'error_type' => 'transactions_fetch_error'
+                'error_type' => 'transactions_fetch_error',
+                'error_details' => [
+                    'type' => get_class($e),
+                    'line' => $e->getLine(),
+                    'file' => basename($e->getFile())
+                ]
             ], 500);
         }
     }

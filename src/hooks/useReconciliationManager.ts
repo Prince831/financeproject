@@ -130,8 +130,22 @@ const {
       setTransactions(response.data.data || []);
       setTotalPages(response.data.last_page || 1);
     } catch (err) {
-      console.error('useReconciliationManager: Error fetching transactions:', err);
-      setError('Failed to fetch transactions');
+      if (axios.isAxiosError(err)) {
+        console.error('useReconciliationManager: Error fetching transactions:', {
+          message: err.message,
+          status: err.response?.status,
+          statusText: err.response?.statusText,
+          data: err.response?.data,
+          url: err.config?.url
+        });
+        
+        const errorMessage = err.response?.data?.message || 'Failed to fetch transactions. Please try again.';
+        setError(errorMessage);
+        setErrorType(err.response?.data?.error_type || 'transactions_fetch_error');
+      } else {
+        console.error('useReconciliationManager: Unexpected error fetching transactions:', err);
+        setError('An unexpected error occurred while fetching transactions.');
+      }
     } finally {
       setLoading(false);
       console.log('useReconciliationManager: Fetch transactions complete');
