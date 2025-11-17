@@ -1,13 +1,62 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Search } from 'lucide-react';
+import { AlertTriangle, Search, Download, FileText } from 'lucide-react';
 import { FileResult } from '../hooks/useReconciliation';
+import axios from 'axios';
+import { useAuth } from '../hooks/useAuth';
 
 interface DiscrepancyReportProps {
   results: FileResult;
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
 export const DiscrepancyReport: React.FC<DiscrepancyReportProps> = ({ results }) => {
   const [query, setQuery] = useState('');
+  const [downloading, setDownloading] = useState<'pdf' | 'xlsx' | null>(null);
+  const { token } = useAuth();
+
+  const handleDownload = async (format: 'pdf' | 'xlsx') => {
+    if (!token) {
+      alert('Please log in to download reports.');
+      return;
+    }
+
+    setDownloading(format);
+    try {
+      const response = await axios.post(
+        `${API_BASE}/download-report`,
+        {
+          reference: results.reference || null,
+          reportData: results.reference ? null : results, // If no reference, send full data
+          format,
+        },
+        {
+          responseType: 'blob',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const blob = new Blob([response.data]);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const filename = results.reference
+        ? `reconciliation_${results.reference}.${format}`
+        : `reconciliation_${new Date().toISOString().split('T')[0]}.${format}`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Failed to download report:', err);
+      alert('Unable to download the report. Please try again.');
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   const fileRecords = results.records || [];
 
@@ -116,9 +165,49 @@ export const DiscrepancyReport: React.FC<DiscrepancyReportProps> = ({ results })
             <p className="text-sm opacity-80">Reconciliation Report</p>
             <h3 className="text-2xl font-semibold font-display">Unmatched Transactions</h3>
           </div>
-          <div className="text-right">
-            <p className="text-sm opacity-70">Generated</p>
-            <p className="font-mono text-lg">{new Date(results.timestamp).toLocaleString('en-GB')}</p>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-sm opacity-70">Generated</p>
+              <p className="font-mono text-lg">{new Date(results.timestamp).toLocaleString('en-GB')}</p>
+            </div>
+            <div className="flex gap-2 ml-4">
+              <button
+                onClick={() => handleDownload('pdf')}
+                disabled={downloading === 'pdf'}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-white/20 hover:bg-white/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Download PDF Report"
+              >
+                {downloading === 'pdf' ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    PDF
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => handleDownload('xlsx')}
+                disabled={downloading === 'xlsx'}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-white/20 hover:bg-white/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Download Excel Report"
+              >
+                {downloading === 'xlsx' ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4 mr-2" />
+                    Excel
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>

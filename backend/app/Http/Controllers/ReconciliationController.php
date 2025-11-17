@@ -164,6 +164,9 @@ class ReconciliationController extends Controller
                 'records_count' => count($result['records'] ?? []),
             ]);
 
+            // Add reference to result before storing
+            $result['reference'] = $reference;
+
             $this->storeReconciliationRun(
                 $result,
                 $mode,
@@ -173,9 +176,6 @@ class ReconciliationController extends Controller
                 null,
                 $reference
             );
-
-            // Add reference to result
-            $result['reference'] = $reference;
 
             Log::info('Manual reconciliation completed successfully', [
                 'reference' => $reference,
@@ -526,6 +526,9 @@ class ReconciliationController extends Controller
                 ];
             }
 
+            // Add reference to result before storing
+            $result['reference'] = $reference;
+
             $this->storeReconciliationRun(
                 $result,
                 $mode,
@@ -535,9 +538,6 @@ class ReconciliationController extends Controller
                 $file->getSize(),
                 $reference
             );
-
-            // Add reference to result
-            $result['reference'] = $reference;
 
             // Clean up temp file
             Storage::disk('local')->delete($path);
